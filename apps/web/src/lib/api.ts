@@ -135,18 +135,26 @@ const routeHandlers: Record<string, (method: string, id: string, segments: strin
     throw { response: { data: { error: `Unhandled mindsets: ${method}` } } };
   },
 
-  'balance-wheel': (method, id, segments, data, db) => {
+  'balance-wheel': (method, _id, segments, data, db, query) => {
     if (method === 'POST') {
       const payload = data as { scores: { domainId: string; score: number }[] };
       db.balanceWheel.saveScores(payload.scores);
       return {};
     }
-    if (method === 'GET' && segments[1] === 'history') return db.balanceWheel.getHistory();
-    if (method === 'DELETE' && id) { db.balanceWheel.deleteRecord(id); return { success: true }; }
+    if (method === 'GET' && segments[1] === 'history') {
+      return db.balanceWheel.getHistory(query?.limit ? parseInt(query.limit, 10) : undefined);
+    }
+    if (method === 'DELETE' && segments[1] === 'scores' && segments[2]) {
+      db.balanceWheel.deleteRecord(segments[2]);
+      return { success: true };
+    }
     throw { response: { data: { error: `Unhandled balance-wheel: ${method}` } } };
   },
 
-  reflections: (method, id, _s, data, db) => {
+  reflections: (method, id, segments, data, db, query) => {
+    if (method === 'GET' && segments[1] === 'today-summary') {
+      return db.reflections.getTodaySummary(query?.date);
+    }
     if (method === 'GET') return db.reflections.getAll();
     if (method === 'POST') return db.reflections.create(data as Parameters<typeof db.reflections.create>[0]);
     if (method === 'PATCH' && id) return db.reflections.update(id, data as Parameters<typeof db.reflections.update>[1]);
@@ -202,12 +210,16 @@ const routeHandlers: Record<string, (method: string, id: string, segments: strin
 
   topics: (method, id, segments, data, db) => {
     if (method === 'GET') return db.topics.getAll();
-    if (method === 'POST') return db.topics.create(data as Parameters<typeof db.topics.create>[0]);
-    if (method === 'PATCH' && id) return db.topics.update(id, data as Parameters<typeof db.topics.update>[1]);
-    if (method === 'DELETE' && id) { db.topics.delete(id); return { success: true }; }
+    if (method === 'POST' && !id) return db.topics.create(data as Parameters<typeof db.topics.create>[0]);
     if (method === 'POST' && id && segments[2] === 'notes') {
       return db.topics.addNote(id, data as Parameters<typeof db.topics.addNote>[1]);
     }
+    if (method === 'PATCH' && id) return db.topics.update(id, data as Parameters<typeof db.topics.update>[1]);
+    if (method === 'DELETE' && id && segments[2] === 'notes' && segments[3]) {
+      db.topics.deleteNote(segments[3]);
+      return { success: true };
+    }
+    if (method === 'DELETE' && id && !segments[2]) { db.topics.delete(id); return { success: true }; }
     throw { response: { data: { error: `Unhandled topics: ${method}` } } };
   },
 
@@ -219,12 +231,14 @@ const routeHandlers: Record<string, (method: string, id: string, segments: strin
     throw { response: { data: { error: `Unhandled todos: ${method}` } } };
   },
 
-  habits: (method, id, _s, data, db) => {
+  habits: (method, id, segments, data, db) => {
     if (method === 'GET') return db.habits.getAll();
-    if (method === 'POST') return db.habits.create(data as Parameters<typeof db.habits.create>[0]);
+    if (method === 'POST' && !id) return db.habits.create(data as Parameters<typeof db.habits.create>[0]);
+    if (method === 'POST' && id && segments[2] === 'log') {
+      return db.habits.toggleLog(id, data as Parameters<typeof db.habits.toggleLog>[1]);
+    }
     if (method === 'PATCH' && id) return db.habits.update(id, data as Parameters<typeof db.habits.update>[1]);
     if (method === 'DELETE' && id) { db.habits.delete(id); return { success: true }; }
-    if (method === 'POST' && id) return db.habits.toggleLog(id, data as Parameters<typeof db.habits.toggleLog>[1]);
     throw { response: { data: { error: `Unhandled habits: ${method}` } } };
   },
 
@@ -235,6 +249,7 @@ const routeHandlers: Record<string, (method: string, id: string, segments: strin
     if (method === 'DELETE' && id && !segments[2]) { db.goals.delete(id); return { success: true }; }
     if (method === 'POST' && id && segments[2] === 'key-results') return db.goals.createKeyResult(id, data as Parameters<typeof db.goals.createKeyResult>[1]);
     if (method === 'PATCH' && id && segments[2] === 'key-results' && segments[3]) return db.goals.updateKeyResult(segments[3], data as Parameters<typeof db.goals.updateKeyResult>[1]);
+    if (method === 'DELETE' && id && segments[2] === 'key-results' && segments[3]) { db.goals.deleteKeyResult(segments[3]); return { success: true }; }
     throw { response: { data: { error: `Unhandled goals: ${method}` } } };
   },
 
@@ -246,12 +261,12 @@ const routeHandlers: Record<string, (method: string, id: string, segments: strin
     throw { response: { data: { error: `Unhandled visions: ${method}` } } };
   },
 
-  contacts: (method, id, _s, data, db) => {
+  contacts: (method, id, segments, data, db) => {
     if (method === 'GET') return db.contacts.getAll();
-    if (method === 'POST') return db.contacts.create(data as Parameters<typeof db.contacts.create>[0]);
+    if (method === 'POST' && !id) return db.contacts.create(data as Parameters<typeof db.contacts.create>[0]);
+    if (method === 'POST' && id && segments[2] === 'touch') { db.contacts.touch(id); return { success: true }; }
     if (method === 'PATCH' && id) return db.contacts.update(id, data as Parameters<typeof db.contacts.update>[1]);
     if (method === 'DELETE' && id) { db.contacts.delete(id); return { success: true }; }
-    if (method === 'POST' && id && _s[2] === 'touch') { db.contacts.touch(id); return { success: true }; }
     throw { response: { data: { error: `Unhandled contacts: ${method}` } } };
   },
 
@@ -263,9 +278,9 @@ const routeHandlers: Record<string, (method: string, id: string, segments: strin
     throw { response: { data: { error: `Unhandled reading: ${method}` } } };
   },
 
-  health: (method, id, segments, data, db, query) => {
+  health: async (method, id, segments, data, db, query) => {
     if (method === 'GET' && !id) return db.healthRecords.getAll(query?.type);
-    if (method === 'GET' && segments[1] === 'summary') return db.healthRecords.getSummary(query?.days ? parseInt(query.days) : 7);
+    if (method === 'GET' && segments[1] === 'summary') return { summary: await db.healthRecords.getSummary(query?.days ? parseInt(query.days) : 7) };
     if (method === 'POST') return db.healthRecords.create(data as Parameters<typeof db.healthRecords.create>[0]);
     if (method === 'PATCH' && id) return db.healthRecords.update(id, data as Parameters<typeof db.healthRecords.update>[1]);
     if (method === 'DELETE' && id) { db.healthRecords.delete(id); return { success: true }; }

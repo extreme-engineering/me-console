@@ -114,7 +114,9 @@ export default function Workflow() {
     try {
       if (activeEntityType === 'vision') {
         const res = await api.get('/visions');
-        setVisions(res.data?.visions || []);
+        // 契约：GET /visions 返回当前生效的单条 { vision }（历史走 /visions/history）
+        const vision = res.data?.vision;
+        setVisions(vision ? [vision] : []);
       } else if (activeEntityType === 'goal') {
         const res = await api.get('/goals');
         setGoals(res.data?.goals || []);

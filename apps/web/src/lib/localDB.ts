@@ -37,11 +37,30 @@ interface MindsetSlogan {
   updatedAt: string;
 }
 
-interface BalanceWheelRecord {
+interface BalanceWheelScoreRow {
+  id: string;
+  userId: string;
+  domainId: string;
+  score: number;
+  note?: string;
+  createdAt: string;
+  domain?: { id: string; name: string; icon: string };
+}
+
+/** 早期版本一次提交存一行的旧格式，仅用于读旧数据兼容 */
+interface LegacyBalanceWheelRecord {
   id: string;
   userId: string;
   scores: { domainId: string; score: number }[];
   createdAt: string;
+}
+
+interface TodaySummary {
+  date: string;
+  todos: { total: number; createdToday: number; items: string[] };
+  habits: { total: number; items: string[] };
+  health: { total: number; items: { type: string; value: number; unit: string; label: string }[] };
+  summary: string;
 }
 
 interface Reflection {
@@ -349,6 +368,42 @@ let dbInstance: IDBDatabase | null = null;
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2);
+}
+
+// 与 packages/api/src/modules/reflection 的文案保持一致
+const HEALTH_LABELS: Record<string, string> = {
+  sleep: '睡眠',
+  exercise: '运动',
+  weight: '体重',
+  mood: '心情',
+  energy: '精力',
+  water: '饮水',
+  custom: '健康',
+};
+
+const UNIT_LABELS: Record<string, string> = {
+  km: '公里',
+  minutes: '分钟',
+  hours: '小时',
+  kg: '公斤',
+  steps: '步',
+};
+
+function formatNumber(value: number): string {
+  return String(Number(value.toFixed(2)));
+}
+
+function formatHealthItem(record: { type: string; value: number; unit: string }): string {
+  const label = HEALTH_LABELS[record.type] ?? record.type;
+  const unit = UNIT_LABELS[record.unit] ?? record.unit;
+  return `${label} ${formatNumber(record.value)} ${unit}`;
+}
+
+function localDateKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function omitPassword(user: User): Omit<User, 'password'> {
@@ -707,25 +762,77 @@ export const localDB = {
   },
 
   balanceWheel: {
+    // 每条生活领域评分独立存储，对齐远端契约（{ id, domainId, score, createdAt, domain }）
     async saveScores(scores: { domainId: string; score: number }[]): Promise<void> {
-      const record: BalanceWheelRecord = {
-        id: generateId(),
-        userId: currentUserId || '',
-        scores,
-        createdAt: new Date().toISOString(),
-      };
-      await add('balanceWheel', record);
+      const now = new Date().toISOString();
+      for (const s of scores) {
+        const row: BalanceWheelScoreRow = {
+          id: generateId(),
+          userId: currentUserId || '',
+          domainId: s.domainId,
+          score: s.score,
+          createdAt: now,
+        };
+        await add('balanceWheel', row);
+      }
     },
 
-    async getHistory(): Promise<{ records: BalanceWheelRecord[] }> {
-      const records = currentUserId
-        ? await getByIndex<BalanceWheelRecord>('balanceWheel', 'userId', currentUserId)
+    async getHistory(limit?: number): Promise<{ scores: BalanceWheelScoreRow[] }> {
+      const rows = currentUserId
+        ? await getByIndex<BalanceWheelScoreRow | LegacyBalanceWheelRecord>('balanceWheel', 'userId', currentUserId)
         : [];
-      return { records };
+      const scores: BalanceWheelScoreRow[] = [];
+      for (const row of rows) {
+        if ('domainId' in row) {
+          scores.push(row);
+        } else if (Array.isArray(row.scores)) {
+          // 旧格式：一次提交含数组，读时展开为逐条
+          for (const s of row.scores) {
+            scores.push({
+              id: `${row.id}:${s.domainId}`,
+              userId: row.userId,
+              domainId: s.domainId,
+              score: s.score,
+              createdAt: row.createdAt,
+            });
+          }
+        }
+      }
+      scores.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      const domains = currentUserId
+        ? await getByIndex<Domain>('domains', 'userId', currentUserId)
+        : [];
+      const byId = new Map(domains.map((d) => [d.id, d]));
+      for (const row of scores) {
+        const domain = byId.get(row.domainId);
+        if (domain) row.domain = { id: domain.id, name: domain.name, icon: domain.icon };
+      }
+      return { scores: limit ? scores.slice(0, limit) : scores };
     },
 
     async deleteRecord(id: string): Promise<void> {
-      await remove('balanceWheel', id);
+      if (!id.includes(':')) {
+        await remove('balanceWheel', id);
+        return;
+      }
+      // 旧格式展开出的合成 id（recordId:domainId）：从原提交记录中移除该领域评分
+      const [recordId, domainId] = id.split(':');
+      const db = await openDB();
+      const legacy = await new Promise<LegacyBalanceWheelRecord | undefined>((resolve, reject) => {
+        const tx = db.transaction('balanceWheel', 'readwrite');
+        const store = tx.objectStore('balanceWheel');
+        const request = store.get(recordId);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      if (!legacy || !Array.isArray(legacy.scores)) return;
+      const rest = legacy.scores.filter((s) => s.domainId !== domainId);
+      if (rest.length === 0) {
+        await remove('balanceWheel', recordId);
+      } else {
+        await update('balanceWheel', { ...legacy, scores: rest });
+      }
     },
   },
 
@@ -773,6 +880,58 @@ export const localDB = {
 
     async delete(id: string): Promise<void> {
       await remove('reflections', id);
+    },
+
+    async getTodaySummary(date?: string): Promise<TodaySummary> {
+      const parsed = date ? new Date(`${date}T00:00:00`) : new Date();
+      const dayStart = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const dayKey = localDateKey(dayStart);
+
+      const inDay = (iso?: string) => {
+        if (!iso) return false;
+        const t = new Date(iso).getTime();
+        return t >= dayStart.getTime() && t < dayEnd.getTime();
+      };
+
+      const todos = currentUserId ? await getByIndex<Todo>('todos', 'userId', currentUserId) : [];
+      const todosDone = todos.filter((t) => inDay(t.completedAt));
+      const todosCreated = todos.filter((t) => inDay(t.createdAt)).length;
+
+      const habits = currentUserId ? await getByIndex<Habit>('habits', 'userId', currentUserId) : [];
+      const habitTitles: string[] = [];
+      for (const habit of habits) {
+        const logs = await getByIndex<HabitLog>('habitLogs', 'habitId', habit.id);
+        if (logs.some((l) => l.date === dayKey || inDay(l.date))) habitTitles.push(habit.title);
+      }
+
+      const healthRecords = (
+        currentUserId ? await getByIndex<HealthRecord>('healthRecords', 'userId', currentUserId) : []
+      ).filter((r) => inDay(r.recordedAt || r.date));
+
+      const lines: string[] = [];
+      if (todosDone.length > 0) {
+        lines.push(`待办完成 ${todosDone.length} 条${todosCreated > 0 ? `（今日新增 ${todosCreated} 条）` : ''}`);
+      }
+      if (habitTitles.length > 0) {
+        lines.push(`习惯打卡 ${habitTitles.length} 项（${habitTitles.join('、')}）`);
+      }
+      if (healthRecords.length > 0) {
+        lines.push(`健康记录 ${healthRecords.length} 条（${healthRecords.map(formatHealthItem).join('、')}）`);
+      }
+
+      return {
+        date: dayKey,
+        todos: { total: todosDone.length, createdToday: todosCreated, items: todosDone.map((t) => t.title) },
+        habits: { total: habitTitles.length, items: habitTitles },
+        health: {
+          total: healthRecords.length,
+          items: healthRecords.map((r) => ({ type: r.type, value: r.value, unit: r.unit, label: formatHealthItem(r) })),
+        },
+        summary: lines.join('；'),
+      };
     },
   },
 
@@ -939,6 +1098,34 @@ export const localDB = {
       await update('topics', updated);
       return { note };
     },
+
+    async deleteNote(noteId: string): Promise<void> {
+      const db = await openDB();
+      const note = await new Promise<TopicNote | undefined>((resolve, reject) => {
+        const tx = db.transaction('topicNotes', 'readonly');
+        const store = tx.objectStore('topicNotes');
+        const request = store.get(noteId);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      if (!note) return;
+      await remove('topicNotes', noteId);
+
+      const topic = await new Promise<Topic | undefined>((resolve, reject) => {
+        const tx = db.transaction('topics', 'readonly');
+        const store = tx.objectStore('topics');
+        const request = store.get(note.topicId);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      if (topic) {
+        await update('topics', {
+          ...topic,
+          notes: topic.notes.filter((n) => n.id !== noteId),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    },
   },
 
   todos: {
@@ -1052,11 +1239,17 @@ export const localDB = {
   },
 
   goals: {
-    async getAll(): Promise<{ goals: Goal[] }> {
+    async getAll(): Promise<{ goals: (Goal & { keyResults: KeyResult[] })[] }> {
       const goals = currentUserId
         ? await getByIndex<Goal>('goals', 'userId', currentUserId)
         : [];
-      return { goals };
+      const withKRs = await Promise.all(
+        goals.map(async (goal) => {
+          const keyResults = await getByIndex<KeyResult>('keyResults', 'goalId', goal.id);
+          return { ...goal, keyResults };
+        })
+      );
+      return { goals: withKRs };
     },
 
     async create(data: Record<string, unknown>): Promise<{ goal: Goal }> {
@@ -1133,6 +1326,10 @@ export const localDB = {
       const updated = { ...kr, ...data, updatedAt: new Date().toISOString() };
       await update('keyResults', updated);
       return { keyResult: updated };
+    },
+
+    async deleteKeyResult(krId: string): Promise<void> {
+      await remove('keyResults', krId);
     },
   },
 
@@ -1399,7 +1596,7 @@ export const localDB = {
       return { subscriptions };
     },
 
-    async getOne(id: string): Promise<{ subscription: Subscription }> {
+    async getOne(id: string): Promise<{ subscription: Subscription; currentUsage: MonthlyUsage | null }> {
       const db = await openDB();
       const subscription = await new Promise<Subscription>((resolve, reject) => {
         const tx = db.transaction('subscriptions', 'readonly');
@@ -1408,7 +1605,12 @@ export const localDB = {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
-      return { subscription };
+      const now = new Date();
+      const usages = currentUserId
+        ? await getByIndex<MonthlyUsage>('monthlyUsage', 'userId', currentUserId)
+        : [];
+      const currentUsage = usages.find((u) => u.subscriptionId === id && u.year === now.getFullYear() && u.month === now.getMonth() + 1) || null;
+      return { subscription, currentUsage };
     },
 
     async create(data: Partial<Subscription>): Promise<{ subscription: Subscription }> {
@@ -1522,7 +1724,12 @@ export const localDB = {
       month: number,
       data: { notes?: string; quotaUsages: { quotaDefinitionId: string; usedAmount: number }[] }
     ): Promise<{ monthlyUsage: MonthlyUsage }> {
-      const id = generateId();
+      // 同一订阅同一年月重复提交时更新原记录（对齐远端 upsert 语义）
+      const usages = currentUserId
+        ? await getByIndex<MonthlyUsage>('monthlyUsage', 'userId', currentUserId)
+        : [];
+      const existing = usages.find((u) => u.subscriptionId === subscriptionId && u.year === year && u.month === month);
+      const id = existing ? existing.id : generateId();
       const usage: MonthlyUsage = {
         id,
         subscriptionId,
@@ -1537,7 +1744,11 @@ export const localDB = {
           usedAmount: u.usedAmount,
         })),
       };
-      await add('monthlyUsage', usage);
+      if (existing) {
+        await update('monthlyUsage', usage);
+      } else {
+        await add('monthlyUsage', usage);
+      }
       return { monthlyUsage: usage };
     },
 
