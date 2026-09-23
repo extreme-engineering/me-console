@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { createReadStream, stat } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { MeLogIngestClient, type MeLogEntryCategory } from './lib/ingest.js';
 import { BrandApiClient } from './lib/brand-client.js';
 import { loadState, resolveStateDir, saveState } from './lib/state.js';
 import { aggregateDaily, parseAppleHealthExport } from './connectors/apple-health.js';
 import { runChatlogConnector } from './connectors/chatlog.js';
+import { runTextlogConnector } from './connectors/textlog.js';
 import { collectDida365Entries, runDida365Connector } from './connectors/dida365.js';
 import { buildSpeakEntries, parseMetrics } from './connectors/speak.js';
 import { runBilibiliConnector } from './connectors/bilibili.js';
@@ -128,6 +130,7 @@ async function main(): Promise<number> {
         '',
         '命令：',
         '  chatlog        同步 chatlog 兼容服务的聊天记录（⚠️ 使用前自行确认数据来源合法）',
+        '  textlog        导入自己导出的聊天记录文件（txt / csv，✅ 合规路径，不解密不碰库）',
         '  apple-health   解析 Apple Health 导出（export.xml / export.zip）',
         '  dida365        同步滴答清单的习惯打卡与任务备注（Web 私有接口，Cookie t token）',
         '  speak          一句话口述录入健康指标（无 API 设备的半自动通道）',
@@ -143,6 +146,7 @@ async function main(): Promise<number> {
         '  --days <n>            回溯天数',
         'chatlog 选项：  --chatlog-url <url>  --talkers <id,id>',
         'health 选项：   --export <path>（export.xml 或 export.zip）',
+        'textlog 选项：  --file <path.txt|path.csv>  --csv  --me <我的名字>  --talker <会话名>',
         'dida365 选项：  --token <t>（默认环境变量 DIDA365_TOKEN）  --api-base <url>',
         '               --no-habits  --no-tasks  --dry-run',
         'speak 选项：    --text <一句话>  --date <YYYY-MM-DD>（默认今天）  --dry-run',
@@ -158,9 +162,9 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  if (!['chatlog', 'apple-health', 'dida365', 'speak', 'brand-bilibili', 'brand-youtube', 'brand-github', 'brand-import'].includes(command)) {
+  if (!['chatlog', 'textlog', 'apple-health', 'dida365', 'speak', 'brand-bilibili', 'brand-youtube', 'brand-github', 'brand-import'].includes(command)) {
     console.error(
-      `未知命令：${command}（可用：chatlog / apple-health / dida365 / speak / brand-bilibili / brand-youtube / brand-github / brand-import）`,
+      `未知命令：${command}（可用：chatlog / textlog / apple-health / dida365 / speak / brand-bilibili / brand-youtube / brand-github / brand-import）`,
     );
     return 1;
   }
@@ -198,6 +202,33 @@ async function main(): Promise<number> {
     );
     await saveState(stateDir, stateName, { lastRunAt: new Date().toISOString(), ...result });
     console.log(`✅ Apple 健康：新增 ${result.created}，更新 ${result.updated}，跳过 ${result.skipped}`);
+    return 0;
+  }
+
+  if (command === 'textlog') {
+    const filePath = flags.file;
+    if (!filePath || filePath.startsWith('-')) {
+      console.error('缺少 --file <path.txt|path.csv>（路径不能以 - 开头）');
+      return 1;
+    }
+    if (!(await statFile(filePath))) {
+      console.error(`文件不存在：${filePath}`);
+      return 1;
+    }
+    const csv = flags.csv !== undefined || filePath.toLowerCase().endsWith('.csv');
+    const content = await readFile(filePath, 'utf8');
+    const result = await runTextlogConnector({
+      content,
+      csv,
+      me: flags.me,
+      talker: flags.talker,
+      sourceName: flags['source-name'],
+      client,
+    });
+    await saveState(stateDir, stateName, { lastRunAt: new Date().toISOString(), ...result });
+    console.log(
+      `✅ 聊天记录导入：解析 ${result.messages} 条，新增 ${result.created}，更新 ${result.updated}，跳过 ${result.skipped}`,
+    );
     return 0;
   }
 

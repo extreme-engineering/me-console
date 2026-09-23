@@ -381,6 +381,8 @@ export interface MeLogOverview {
   sources: { total: number; connected: number; error: number }[];
   latestRuns: MeLogRun[];
   llm: { configured: boolean; model?: string };
+  /** 数据边界：被排除在云端读写之外的敏感分类（本地模式为空） */
+  sensitiveExcluded?: string[];
 }
 
 // ==================== 品牌 (Brand) ====================

@@ -16,6 +16,7 @@ async function cleanup() {
   await prisma.meLogSource.deleteMany({ where: { userId: USER_ID } });
   await prisma.healthRecord.deleteMany({ where: { userId: USER_ID } });
   await prisma.todo.deleteMany({ where: { userId: USER_ID } });
+  await prisma.periodicReview.deleteMany({ where: { userId: USER_ID } });
   await prisma.user.deleteMany({ where: { id: USER_ID } });
 }
 
@@ -33,6 +34,7 @@ describe('MeLog Routes', () => {
     await prisma.meLogSchedule.deleteMany({ where: { userId: USER_ID } });
     await prisma.healthRecord.deleteMany({ where: { userId: USER_ID } });
     await prisma.todo.deleteMany({ where: { userId: USER_ID } });
+    await prisma.periodicReview.deleteMany({ where: { userId: USER_ID } });
   });
 
   afterAll(async () => {
@@ -581,6 +583,197 @@ describe('MeLog Routes', () => {
       });
       const stats = JSON.parse(response.json().run.stats);
       expect(stats.engine).toBe('rule');
+    });
+  });
+
+  describe('MeLog → 反思闭环', () => {
+    async function seedAndRun(slug: string, days?: number) {
+      const app = await createApp();
+      await app.inject({
+        method: 'POST',
+        url: '/api/melog/ingest',
+        payload: {
+          source: { adapter: 'chatlog', name: '微信聊天记录', category: 'im' },
+          entries: [
+            {
+              externalId: `loop-${slug}`,
+              category: 'im',
+              type: 'chat-message',
+              title: '与妈妈的对话',
+              content: '周末回家吃饭',
+              actor: '妈妈',
+              occurredAt: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+      await app.inject({ method: 'GET', url: '/api/melog/skills' });
+      const skill = await prisma.meLogSkill.findFirst({ where: { userId: USER_ID, slug } });
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/melog/skills/${skill!.id}/run`,
+        payload: days ? { days } : {},
+      });
+      return { app, response };
+    }
+
+    it('life-recap 运行后自动生成周期复盘草稿并回写 linkedReviewId', async () => {
+      const { response } = await seedAndRun('life-recap', 7);
+      expect(response.statusCode).toBe(201);
+
+      const review = await prisma.periodicReview.findFirst({ where: { userId: USER_ID } });
+      expect(review).not.toBeNull();
+      expect(review!.period).toBe('weekly');
+      expect(review!.insights).toContain('## 生活复盘');
+
+      const summary = JSON.parse(review!.dataSummary || '{}') as {
+        source?: string;
+        runId?: string;
+        engine?: string;
+      };
+      expect(summary.source).toBe('melog:life-recap');
+      expect(summary.engine).toBe('rule');
+      expect(summary.runId).toBe(response.json().run.id);
+
+      const runStats = JSON.parse(String(response.json().run.stats));
+      expect(runStats.linkedReviewId).toBe(review!.id);
+    });
+
+    it('config syncReview=false 时关闭同步', async () => {
+      const app = await createApp();
+      await app.inject({ method: 'GET', url: '/api/melog/skills' });
+      await prisma.meLogSkill.updateMany({
+        where: { userId: USER_ID, slug: 'life-recap' },
+        data: { config: JSON.stringify({ syncReview: false }) },
+      });
+      await seedAndRun('life-recap');
+
+      const count = await prisma.periodicReview.count({ where: { userId: USER_ID } });
+      expect(count).toBe(0);
+    });
+
+    it('非复盘技能不生成周期复盘', async () => {
+      await seedAndRun('health-insight');
+      const count = await prisma.periodicReview.count({ where: { userId: USER_ID } });
+      expect(count).toBe(0);
+    });
+  });
+
+  describe('连接器令牌与搜索', () => {
+    it('should create, use, scope and revoke connector tokens', async () => {
+      const app = await createApp();
+      const sourceA = await app.inject({
+        method: 'POST',
+        url: '/api/melog/sources',
+        payload: { name: '源A', category: 'im', adapter: 'textlog' },
+      });
+      const sourceB = await app.inject({
+        method: 'POST',
+        url: '/api/melog/sources',
+        payload: { name: '源B', category: 'note', adapter: 'obsidian' },
+      });
+      const idA = sourceA.json().source.id;
+      const idB = sourceB.json().source.id;
+
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/melog/tokens',
+        payload: { name: '导入脚本', sourceId: idA },
+      });
+      expect(created.statusCode).toBe(201);
+      const secret = created.json().secret as string;
+      expect(secret).toMatch(/^melt_[0-9a-f]{48}$/);
+
+      const listed = await app.inject({ method: 'GET', url: '/api/melog/tokens' });
+      expect(listed.json().tokens).toHaveLength(1);
+      expect(listed.json().tokens[0]).not.toHaveProperty('tokenHash');
+
+      const authHeader = { Authorization: `Bearer ${secret}` };
+      // 绑定数据源的令牌写入自己的源：成功
+      const ok = await app.inject({
+        method: 'POST',
+        url: '/api/melog/ingest',
+        headers: authHeader,
+        payload: {
+          sourceId: idA,
+          entries: [
+            { externalId: 'tk-1', category: 'im', type: 'chat-message', title: '令牌导入', occurredAt: new Date().toISOString() },
+          ],
+        },
+      });
+      expect(ok.statusCode).toBe(200);
+      expect(ok.json().created).toBe(1);
+
+      // 内联指定其他数据源：403
+      const inline = await app.inject({
+        method: 'POST',
+        url: '/api/melog/ingest',
+        headers: authHeader,
+        payload: {
+          source: { adapter: 'chatlog', name: 'X' },
+          entries: [{ category: 'im', type: 'chat-message', title: 't', occurredAt: new Date().toISOString() }],
+        },
+      });
+      expect(inline.statusCode).toBe(403);
+
+      // 显式指向别的数据源：403
+      const other = await app.inject({
+        method: 'POST',
+        url: '/api/melog/ingest',
+        headers: authHeader,
+        payload: {
+          sourceId: idB,
+          entries: [{ category: 'note', type: 'markdown-doc', title: 't', occurredAt: new Date().toISOString() }],
+        },
+      });
+      expect(other.statusCode).toBe(403);
+
+      // 无效令牌：401
+      const bad = await app.inject({
+        method: 'POST',
+        url: '/api/melog/ingest',
+        headers: { Authorization: 'Bearer melt_deadbeef' },
+        payload: { sourceId: idA, entries: [] },
+      });
+      expect(bad.statusCode).toBe(401);
+
+      // 吊销后：401
+      const tokenId = created.json().token.id;
+      await app.inject({ method: 'DELETE', url: `/api/melog/tokens/${tokenId}` });
+      const after = await app.inject({
+        method: 'POST',
+        url: '/api/melog/ingest',
+        headers: authHeader,
+        payload: { sourceId: idA, entries: [] },
+      });
+      expect(after.statusCode).toBe(401);
+    });
+
+    it('should search via FTS for 3+ char CJK keywords', async () => {
+      const app = await createApp();
+      await app.inject({
+        method: 'POST',
+        url: '/api/melog/ingest',
+        payload: {
+          source: { adapter: 'chatlog', name: '微信聊天记录', category: 'im' },
+          entries: [
+            {
+              externalId: 'fts-1',
+              category: 'im',
+              type: 'chat-message',
+              title: '与老王的对话',
+              content: '明天上午同步一下项目进度',
+              occurredAt: new Date().toISOString(),
+            },
+          ],
+        },
+      });
+
+      const found = await app.inject({ method: 'GET', url: '/api/melog/entries?q=目进度' });
+      expect(found.json().total).toBe(1);
+
+      const missing = await app.inject({ method: 'GET', url: '/api/melog/entries?q=不存在的关键词呀' });
+      expect(missing.json().total).toBe(0);
     });
   });
 

@@ -214,14 +214,14 @@ export interface SkillRunResult {
 
 async function runBuiltin(
   builtin: BuiltinSkillDef,
-  skillRecord: { id: string },
+  skillRecord: { id: string; config?: string | null },
   userId: string,
   start: Date,
   end: Date,
   notice = '',
 ): Promise<SkillRunResult> {
   const output = await builtin.run(userId, start, end);
-  const run = await prisma.meLogRun.create({
+  let run = await prisma.meLogRun.create({
     data: {
       userId,
       skillId: skillRecord.id,
@@ -235,8 +235,81 @@ async function runBuiltin(
     },
     include: { skill: { select: { name: true, slug: true } } },
   });
+  const linkedReviewId = await maybeSyncReviewToPeriodicReview(userId, builtin.slug, skillRecord, start, end, run);
+  if (linkedReviewId) {
+    run = await prisma.meLogRun.update({
+      where: { id: run.id },
+      data: { stats: withStatsField(run.stats, { linkedReviewId }) },
+      include: { skill: { select: { name: true, slug: true } } },
+    });
+  }
   await prisma.meLogSkill.update({ where: { id: skillRecord.id }, data: { lastRunAt: new Date() } });
   return { run, result: run.result || '' };
+}
+
+// ==================== MeLog → 反思（五维）闭环 ====================
+
+function parseSkillConfig(config: string | null | undefined): Record<string, unknown> {
+  if (!config) return {};
+  try {
+    const parsed = JSON.parse(config);
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function withStatsField(stats: string | null | undefined, patch: Record<string, unknown>): string {
+  let base: Record<string, unknown> = {};
+  try {
+    base = stats ? (JSON.parse(stats) as Record<string, unknown>) : {};
+  } catch {
+    base = {};
+  }
+  return JSON.stringify({ ...base, ...patch });
+}
+
+/**
+ * 生活复盘（life-recap）运行成功后，把报告同步为「反思」维度的周期复盘草稿：
+ * insights 存报告全文，dataSummary 记录来源与数据血缘（runId / engine / entryCount）。
+ * 技能 config 里 syncReview: false 可关闭。
+ */
+async function maybeSyncReviewToPeriodicReview(
+  userId: string,
+  slug: string,
+  skillRecord: { id: string; config?: string | null },
+  start: Date,
+  end: Date,
+  run: { id: string; summary?: string | null; result?: string | null; stats?: string | null },
+): Promise<string | null> {
+  if (slug !== 'life-recap') return null;
+  if (parseSkillConfig(skillRecord.config).syncReview === false) return null;
+
+  const spanDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400e3));
+  const period = spanDays <= 1 ? 'daily' : spanDays <= 10 ? 'weekly' : 'monthly';
+  let stats: Record<string, unknown> = {};
+  try {
+    stats = run.stats ? (JSON.parse(run.stats) as Record<string, unknown>) : {};
+  } catch {
+    stats = {};
+  }
+  const review = await prisma.periodicReview.create({
+    data: {
+      userId,
+      period,
+      startDate: start,
+      endDate: end,
+      insights: run.result || '',
+      dataSummary: JSON.stringify({
+        source: 'melog:life-recap',
+        runId: run.id,
+        summary: run.summary,
+        engine: stats.engine,
+        entryCount: stats.entryCount,
+      }),
+    },
+  });
+  return review.id;
 }
 
 /**
@@ -295,7 +368,7 @@ export async function executeSkill(
         context,
         fetchImpl: opts?.llmFetchImpl,
       });
-      const run = await prisma.meLogRun.create({
+      let run = await prisma.meLogRun.create({
         data: {
           userId,
           skillId: skillRecord.id,
@@ -309,6 +382,14 @@ export async function executeSkill(
         },
         include: { skill: { select: { name: true, slug: true } } },
       });
+      const linkedReviewId = await maybeSyncReviewToPeriodicReview(userId, slug, skillRecord, start, end, run);
+      if (linkedReviewId) {
+        run = await prisma.meLogRun.update({
+          where: { id: run.id },
+          data: { stats: withStatsField(run.stats, { linkedReviewId }) },
+          include: { skill: { select: { name: true, slug: true } } },
+        });
+      }
       await prisma.meLogSkill.update({ where: { id: skillRecord.id }, data: { lastRunAt: new Date() } });
       return { run, result: llm.result };
     } catch (error) {

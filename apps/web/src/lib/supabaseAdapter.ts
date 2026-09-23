@@ -648,10 +648,34 @@ async function getSubscriptionDashboard() {
 
 const MELOG_CATEGORIES = ['health', 'note', 'im', 'media', 'location', 'custom'] as const;
 
+// 数据边界（MeLog Standard「数据边界」节）：即时通讯等敏感分类默认不进入云端读写。
+// 确要放开需显式以 VITE_MELOG_CLOUD_SENSITIVE=true 构建，风险自担。
+const MELOG_SENSITIVE_CATEGORIES = ['im'] as const;
+const MELOG_CLOUD_ALLOW_SENSITIVE = import.meta.env.VITE_MELOG_CLOUD_SENSITIVE === 'true';
+
+function melogCloudCategories(): string[] {
+  if (MELOG_CLOUD_ALLOW_SENSITIVE) return [...MELOG_CATEGORIES];
+  return MELOG_CATEGORIES.filter((c) => !MELOG_SENSITIVE_CATEGORIES.includes(c as 'im'));
+}
+
+function assertCloudCategory(category: string | null | undefined) {
+  if (!category) return;
+  if (!MELOG_CLOUD_ALLOW_SENSITIVE && (MELOG_SENSITIVE_CATEGORIES as readonly string[]).includes(category)) {
+    throw err(
+      `敏感分类「${category}」默认不进入云端（数据边界见 MeLog Standard）；如需放开请以 VITE_MELOG_CLOUD_SENSITIVE=true 构建`,
+      403,
+    );
+  }
+}
+
 async function melogOverview() {
   const now = Date.now();
   const d7 = new Date(now - 7 * 86400e3).toISOString();
   const d30 = new Date(now - 30 * 86400e3).toISOString();
+
+  const allowedCategories = melogCloudCategories();
+  const restrictCategory = (q: any): any => // eslint-disable-line @typescript-eslint/no-explicit-any
+    MELOG_CLOUD_ALLOW_SENSITIVE ? q : q.in('category', allowedCategories);
 
   const countEntries = async (decorate?: (q: any) => any): Promise<number> => { // eslint-disable-line @typescript-eslint/no-explicit-any
     let q = sb().from('melog_entries').select('id', { count: 'exact', head: true });
@@ -662,12 +686,12 @@ async function melogOverview() {
   };
 
   const counts = await Promise.all([
-    countEntries(),
-    countEntries((q) => q.gte('occurredAt', d7)),
-    countEntries((q) => q.gte('occurredAt', d30)),
+    countEntries(restrictCategory),
+    countEntries((q) => restrictCategory(q).gte('occurredAt', d7)),
+    countEntries((q) => restrictCategory(q).gte('occurredAt', d30)),
     ...MELOG_CATEGORIES.flatMap((cat) => [
-      countEntries((q) => q.eq('category', cat)),
-      countEntries((q) => q.eq('category', cat).gte('occurredAt', d7)),
+      countEntries((q) => restrictCategory(q).eq('category', cat)),
+      countEntries((q) => restrictCategory(q).eq('category', cat).gte('occurredAt', d7)),
     ]),
   ]);
 
@@ -697,6 +721,8 @@ async function melogOverview() {
       error: sources.filter((s) => s.status === 'error').length,
     }],
     latestRuns: runsRes.data ?? [],
+    // 数据边界：默认排除的敏感分类（供 UI 提示；全量为空数组）
+    sensitiveExcluded: MELOG_CLOUD_ALLOW_SENSITIVE ? [] : [...MELOG_SENSITIVE_CATEGORIES],
     // 云端 LLM 运行依赖 Meoo Edge Function；PostgREST 直连模式下前端就绪状态为未配置
     llm: { configured: false, model: null },
   };
@@ -709,7 +735,12 @@ async function melogEntries(query: Record<string, string>) {
   let q = sb()
     .from('melog_entries')
     .select('*, source:melog_sources(name,adapter,category)', { count: 'exact' });
-  if (query.category) q = q.eq('category', query.category);
+  if (query.category) {
+    assertCloudCategory(query.category);
+    q = q.eq('category', query.category);
+  } else if (!MELOG_CLOUD_ALLOW_SENSITIVE) {
+    q = q.in('category', melogCloudCategories());
+  }
   if (query.sourceId) q = q.eq('sourceId', query.sourceId);
   if (query.from) q = q.gte('occurredAt', new Date(query.from).toISOString());
   if (query.to) q = q.lte('occurredAt', new Date(query.to).toISOString());
@@ -743,6 +774,7 @@ async function handleMelog(
         .maybeSingle();
       if (error) throw err(error.message);
       if (!row) throw err('条目不存在', 404);
+      assertCloudCategory((row as { category?: string }).category);
       return { entry: row };
     }
     if (method === 'DELETE' && partId) {

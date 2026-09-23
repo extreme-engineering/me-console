@@ -42,9 +42,23 @@ export function isLlmConfigured(): boolean {
 
 // ==================== 上下文收集 ====================
 
-const MAX_ENTRIES = 200;
 const MAX_CONTENT = 400;
 const MAX_PAYLOAD = 240;
+
+/** 可调参数（环境变量，均有兜底默认值） */
+function envInt(name: string, fallback: number, min: number, max: number): number {
+  const raw = Number(process.env[name]);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.min(Math.max(Math.round(raw), min), max);
+}
+
+export function llmTimeoutMs(): number {
+  return envInt('MELOG_LLM_TIMEOUT_MS', 60_000, 1_000, 600_000);
+}
+
+export function llmMaxEntries(): number {
+  return envInt('MELOG_LLM_MAX_ENTRIES', 200, 10, 1_000);
+}
 
 export interface SkillContextEntry {
   id: string;
@@ -72,7 +86,7 @@ export async function gatherContextData(
     where: { userId, occurredAt: { gte: periodStart, lte: periodEnd } },
     orderBy: { occurredAt: 'asc' },
   });
-  const recent = all.slice(-MAX_ENTRIES);
+  const recent = all.slice(-llmMaxEntries());
   return {
     total: all.length,
     entries: recent.map((entry) => ({
@@ -175,7 +189,7 @@ export async function generateLlmReport(options: GenerateLlmReportOptions): Prom
   });
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000);
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? llmTimeoutMs());
   try {
     const fetchImpl = options.fetchImpl || globalThis.fetch.bind(globalThis);
     const response = await fetchImpl(`${provider.baseUrl.replace(/\/+$/, '')}/chat/completions`, {

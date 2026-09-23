@@ -42,6 +42,7 @@ model User {
   melogSkills        MeLogSkill[]
   melogRuns          MeLogRun[]
   melogSchedules     MeLogSchedule[]
+  melogConnectorTokens MeLogConnectorToken[]
   brandProfile       BrandProfile?
   brandPillars       BrandPillar[]
   brandChannels      PlatformChannel[]
@@ -505,9 +506,26 @@ model MeLogSource {
 
   user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   entries MeLogEntry[]
+  connectorTokens MeLogConnectorToken[]
 
   @@unique([userId, adapter, name])
   @@index([userId, category])
+}
+
+// 连接器细粒度令牌：只允许调用 ingest 写入（可绑定单一数据源），可独立吊销
+model MeLogConnectorToken {
+  id         String    @id @default(uuid())
+  userId     String
+  name       String
+  tokenHash  String    @unique // sha256(melt_…)，明文只在创建时返回一次
+  sourceId   String? // 绑定数据源；空 = 可写该用户的任意源
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source MeLogSource? @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // 条目：统一事件信封，MeLog Standard 的最小数据单元

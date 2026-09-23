@@ -1,5 +1,7 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import {
   ingestEntries,
@@ -11,8 +13,16 @@ import {
 import { ensureBuiltinSkills } from './skills.js';
 import { computeNextRunAt } from './scheduler.js';
 import { parseCaptureText, commitCaptures } from './capture.js';
+import { searchFilter } from './search.js';
 
 // ==================== 校验 Schema ====================
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    /** Bearer melt_… 连接器令牌鉴权成功后挂载，用于数据源作用域限制 */
+    connectorToken?: { id: string; sourceId: string | null };
+  }
+}
 
 const categoryEnum = z.enum(MELOG_CATEGORIES);
 
@@ -152,10 +162,41 @@ const updateSkillSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+const createTokenSchema = z.object({
+  name: z.string().min(1).max(100),
+  sourceId: z.string().optional(),
+});
+
 // ==================== 路由 ====================
 
 export const melogRoutes: FastifyPluginAsync = async (fastify) => {
   const auth = { onRequest: [fastify.authenticate] };
+
+  /**
+   * ingest 专用鉴权：支持 JWT（完整权限）或 `Bearer melt_…` 连接器令牌
+   * （仅 ingest，且受数据源绑定限制）。连接器令牌不经过 JWT 校验。
+   */
+  const ingestAuth = async (request: FastifyRequest, reply: FastifyReply) => {
+    const header = request.headers.authorization || '';
+    const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    if (bearer.startsWith('melt_')) {
+      const record = await prisma.meLogConnectorToken.findUnique({
+        where: { tokenHash: sha256(bearer) },
+      });
+      if (!record) {
+        return reply.code(401).send({ error: '无效的连接器令牌' });
+      }
+      request.user = { userId: record.userId };
+      request.connectorToken = { id: record.id, sourceId: record.sourceId };
+      await prisma.meLogConnectorToken.update({
+        where: { id: record.id },
+        data: { lastUsedAt: new Date() },
+      });
+      return;
+    }
+    // 其余情况走标准鉴权（JWT / 开发旁路）
+    return fastify.authenticate(request, reply);
+  };
 
   // ---------- 总览 ----------
 
@@ -214,7 +255,8 @@ export const melogRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/entries', auth, async (request, reply) => {
     try {
       const query = listEntriesSchema.parse(request.query);
-      const where = {
+      const search = await searchFilter(request.user.userId, query.q);
+      const where: Prisma.MeLogEntryWhereInput = {
         userId: request.user.userId,
         ...(query.category ? { category: query.category } : {}),
         ...(query.sourceId ? { sourceId: query.sourceId } : {}),
@@ -222,15 +264,7 @@ export const melogRoutes: FastifyPluginAsync = async (fastify) => {
           ...(query.from ? { gte: query.from } : {}),
           ...(query.to ? { lte: query.to } : {}),
         },
-        ...(query.q
-          ? {
-              OR: [
-                { title: { contains: query.q } },
-                { content: { contains: query.q } },
-                { actor: { contains: query.q } },
-              ],
-            }
-          : {}),
+        ...(search || {}),
       };
 
       const [entries, total] = await Promise.all([
@@ -291,9 +325,19 @@ export const melogRoutes: FastifyPluginAsync = async (fastify) => {
     return { success: true };
   });
 
-  fastify.post('/ingest', auth, async (request, reply) => {
+  fastify.post('/ingest', { onRequest: [ingestAuth] }, async (request, reply) => {
     try {
       const input = ingestSchema.parse(request.body) as IngestInput;
+      const scoped = request.connectorToken?.sourceId ?? null;
+      if (scoped) {
+        if (input.sourceId && input.sourceId !== scoped) {
+          return reply.code(403).send({ error: '令牌仅限写入绑定的数据源' });
+        }
+        if (input.source) {
+          return reply.code(403).send({ error: '绑定数据源的令牌不能内联指定其他数据源' });
+        }
+        input.sourceId = scoped;
+      }
       const result = await ingestEntries(request.user.userId, input);
       return { ...result };
     } catch (error) {
@@ -304,6 +348,62 @@ export const melogRoutes: FastifyPluginAsync = async (fastify) => {
         throw error;
       });
     }
+  });
+
+  // ---------- 连接器令牌 ----------
+
+  fastify.get('/tokens', auth, async (request) => {
+    const tokens = await prisma.meLogConnectorToken.findMany({
+      where: { userId: request.user.userId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        sourceId: true,
+        lastUsedAt: true,
+        createdAt: true,
+        source: { select: { name: true, adapter: true } },
+      },
+    });
+    return { tokens };
+  });
+
+  fastify.post('/tokens', auth, async (request, reply) => {
+    try {
+      const data = createTokenSchema.parse(request.body);
+      if (data.sourceId) {
+        const source = await prisma.meLogSource.findFirst({
+          where: { id: data.sourceId, userId: request.user.userId },
+        });
+        if (!source) return reply.code(404).send({ error: '数据源不存在' });
+      }
+      const secret = `melt_${randomBytes(24).toString('hex')}`;
+      const token = await prisma.meLogConnectorToken.create({
+        data: {
+          userId: request.user.userId,
+          name: data.name,
+          sourceId: data.sourceId,
+          tokenHash: sha256(secret),
+        },
+        include: { source: { select: { name: true, adapter: true } } },
+      });
+      // 明文仅此一次返回
+      return reply.code(201).send({ token, secret });
+    } catch (error) {
+      return handleZodError(error, reply, () => {
+        fastify.log.error(error);
+        return reply.code(500).send({ error: '服务器错误' });
+      });
+    }
+  });
+
+  fastify.delete('/tokens/:id', auth, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await prisma.meLogConnectorToken.deleteMany({
+      where: { id, userId: request.user.userId },
+    });
+    if (result.count === 0) return reply.code(404).send({ error: '令牌不存在' });
+    return { success: true };
   });
 
   // ---------- 口述打卡 ----------
@@ -509,6 +609,10 @@ export const melogRoutes: FastifyPluginAsync = async (fastify) => {
 };
 
 // ==================== 辅助 ====================
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
 
 async function resolveManualSource(userId: string) {
   return prisma.meLogSource.upsert({

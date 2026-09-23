@@ -41,6 +41,7 @@ interface MeLogRun {
   status: string;
   summary?: string;
   result?: string;
+  stats?: string;
   createdAt: string;
   skill?: { name: string; slug: string };
 }
@@ -330,6 +331,26 @@ export default function Skills() {
             {selectedRun.summary}
           </p>
         )}
+        {(() => {
+          let stats: { linkedReviewId?: string; engine?: string } | null = null;
+          try {
+            stats = JSON.parse(selectedRun?.stats || '{}') as { linkedReviewId?: string; engine?: string };
+          } catch {
+            stats = null;
+          }
+          if (!stats) return null;
+          const engineLabel = stats.engine === 'llm' ? 'LLM' : stats.engine === 'rule' ? '规则引擎' : null;
+          return (
+            <div className="flex items-center gap-3 mb-3 text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>
+              {engineLabel && (
+                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">引擎：{engineLabel}</span>
+              )}
+              {stats.linkedReviewId && (
+                <span style={{ color: '#059669' }}>✅ 已同步为「反思 → 周期复盘」草稿</span>
+              )}
+            </div>
+          );
+        })()}
         <pre
           className="text-xs whitespace-pre-wrap font-sans leading-relaxed max-h-[60vh] overflow-y-auto"
           style={{ color: 'var(--color-text-primary)' }}

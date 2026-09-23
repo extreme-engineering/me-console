@@ -16,6 +16,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import MockBadge from '../components/MockBadge';
+import OnboardingBanner from '../components/onboarding/OnboardingBanner';
 import { isMockItem } from '../lib/mockFlag';
 
 interface Todo {
@@ -196,6 +197,9 @@ export default function Today() {
 
   return (
     <div className="page-enter">
+      {/* Onboarding Wizard Banner */}
+      <OnboardingBanner />
+
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center gap-3 mb-1.5">

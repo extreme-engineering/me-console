@@ -10,6 +10,7 @@
 | --- | --- | --- | --- |
 | `apple-health` | 健康 | MeLog | 解析 Apple Health 导出（export.xml / export.zip），按天聚合睡眠、步数、心率、体重、体能训练 |
 | `chatlog` | IM（社区适配器） | MeLog | 调用 chatlog 兼容服务的 HTTP API，把消息按信封转换后推送 |
+| `textlog` | IM（✅ 合规路径） | MeLog | 导入**用户自己导出的**聊天记录文件（txt / csv），纯文本解析，不碰任何应用数据库 |
 | `dida365` | 待办/习惯 | MeLog | 拉取滴答清单的习惯打卡记录与任务备注，按信封转换后推送 |
 | `brand-bilibili` | B站 | 品牌快照 | 拉取公开粉丝数与投稿统计，按 followers 累计 / views 等本周期增量写入 `MetricSnapshot` |
 | `brand-youtube` | YouTube | 品牌快照 | Data API v3 拉订阅 + 视频统计（需 `YOUTUBE_API_KEY`） |
@@ -19,6 +20,7 @@
 > ⚠️ **chatlog 合规提示**：上游项目 sjzar/chatlog 已于 2025-10 被作者因合规风险移除。
 > 本适配器只调用「用户本地已部署的兼容服务」（默认 `http://127.0.0.1:5030`），
 > 不包含任何数据解密能力。使用前请自行确认本地数据来源合法，并仅处理属于自己的聊天记录。
+> **推荐优先使用 `textlog`**（自己导出的文件）作为聊天记录的合规接入路径。
 
 > ⚠️ **dida365 接口提示**：习惯打卡与任务备注来自滴答清单 Web 端使用的**非官方接口**
 > （`api.dida365.com/api/v2/*`），不受官方 SLA 保护，可能随版本变动。

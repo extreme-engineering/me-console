@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { buildSkillPrompt, generateLlmReport, getLlmProvider, isLlmConfigured } from './llm.js';
+import { buildSkillPrompt, generateLlmReport, getLlmProvider, isLlmConfigured, llmMaxEntries, llmTimeoutMs } from './llm.js';
 
 const ENV_KEYS = ['MELOG_LLM_BASE_URL', 'MELOG_LLM_API_KEY', 'MELOG_LLM_MODEL'] as const;
 
@@ -119,5 +119,17 @@ describe('LLM 运行器', () => {
         periodEnd: new Date('2026-09-03T00:00:00Z'),
       }),
     ).rejects.toThrow(/LLM 未配置/);
+  });
+
+  it('should clamp configurable timeout and context knobs', () => {
+    process.env.MELOG_LLM_MAX_ENTRIES = '5000';
+    process.env.MELOG_LLM_TIMEOUT_MS = '10';
+    expect(llmMaxEntries()).toBe(1000);
+    expect(llmTimeoutMs()).toBe(1000);
+
+    delete process.env.MELOG_LLM_MAX_ENTRIES;
+    delete process.env.MELOG_LLM_TIMEOUT_MS;
+    expect(llmMaxEntries()).toBe(200);
+    expect(llmTimeoutMs()).toBe(60_000);
   });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash2, TerminalSquare, X } from 'lucide-react';
+import { Plus, Trash2, TerminalSquare, X, KeyRound } from 'lucide-react';
 import api from '../../lib/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
@@ -22,6 +22,15 @@ interface MeLogSource {
   lastSyncAt?: string;
   entryCount: number;
   isActive: boolean;
+}
+
+interface TokenRow {
+  id: string;
+  name: string;
+  sourceId?: string;
+  lastUsedAt?: string;
+  createdAt: string;
+  source?: { name: string; adapter: string };
 }
 
 export default function Sources() {
@@ -277,15 +286,16 @@ export default function Sources() {
         style={{ backgroundColor: 'var(--color-bg-secondary)', border: '1px dashed var(--color-border-light)' }}
       >
         <div className="text-xs font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-          连接器如何推送数据（MeLog Standard Ingest API）
+          连接器如何推送数据（MeLog Standard Ingest API，推荐用下方令牌鉴权）
         </div>
         <pre
           className="text-[11px] overflow-x-auto whitespace-pre-wrap"
           style={{ color: 'var(--color-text-tertiary)' }}
         >{`curl -X POST http://localhost:3001/api/melog/ingest \\
   -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer melt_xxx" \\
   -d '{
-    "source": { "adapter": "chatlog", "name": "微信聊天记录", "category": "im" },
+    "sourceId": "绑定令牌的数据源 ID",
     "entries": [{
       "externalId": "msg-001",
       "category": "im",
@@ -297,6 +307,159 @@ export default function Sources() {
     }]
   }'`}</pre>
       </div>
+
+      {/* 连接器令牌 */}
+      <TokenManager sources={sources} />
+    </div>
+  );
+}
+
+function TokenManager({ sources }: { sources: MeLogSource[] }) {
+  const [tokens, setTokens] = useState<TokenRow[]>([]);
+  const [name, setName] = useState('');
+  const [sourceId, setSourceId] = useState('');
+  const [freshSecret, setFreshSecret] = useState('');
+  const [show, setShow] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.get('/melog/tokens');
+      setTokens(res.data.tokens || []);
+    } catch {
+      setTokens([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) return;
+    try {
+      const res = await api.post('/melog/tokens', {
+        name: name.trim(),
+        ...(sourceId ? { sourceId } : {}),
+      });
+      setFreshSecret(res.data.secret);
+      setName('');
+      setSourceId('');
+      load();
+    } catch {}
+  };
+
+  const revoke = async (id: string) => {
+    if (!confirm('吊销后使用该令牌的脚本将立即失效，确定？')) return;
+    try {
+      await api.delete(`/melog/tokens/${id}`);
+      load();
+    } catch {}
+  };
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>
+          连接器令牌
+        </h3>
+        <button
+          onClick={() => setShow(!show)}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-colors hover:bg-slate-100"
+          style={{ color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)' }}
+        >
+          {show ? <X size={12} /> : <KeyRound size={12} />}
+          {show ? '收起' : '新建令牌'}
+        </button>
+      </div>
+      <p className="text-xs mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+        令牌只允许调用 ingest 写入（可绑定单一数据源），不能访问其他 API；明文只显示一次，泄露即吊销
+      </p>
+
+      {show && (
+        <form onSubmit={create} className="flex flex-wrap items-center gap-2 mb-4">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="令牌名称，如 导入脚本"
+            className="px-3 py-1.5 text-xs rounded-lg outline-none w-44"
+            style={{
+              backgroundColor: 'var(--color-surface)',
+              border: '1px solid var(--color-border-light)',
+              color: 'var(--color-text-primary)',
+            }}
+          />
+          <select
+            value={sourceId}
+            onChange={(e) => setSourceId(e.target.value)}
+            className="px-3 py-1.5 text-xs rounded-lg outline-none"
+            style={{
+              backgroundColor: 'var(--color-surface)',
+              border: '1px solid var(--color-border-light)',
+              color: 'var(--color-text-secondary)',
+            }}
+          >
+            <option value="">可写任意数据源</option>
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                仅限：{source.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="submit"
+            className="px-3 py-1.5 text-xs rounded-lg text-white"
+            style={{ backgroundColor: 'var(--color-text-primary)' }}
+          >
+            生成令牌
+          </button>
+        </form>
+      )}
+
+      {freshSecret && (
+        <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0' }}>
+          <div className="text-xs mb-1" style={{ color: '#065f46' }}>
+            新令牌明文（仅显示这一次，立即复制保存）：
+          </div>
+          <code className="text-xs break-all" style={{ color: '#065f46' }}>
+            {freshSecret}
+          </code>
+          <button
+            className="ml-3 text-xs underline"
+            style={{ color: '#065f46' }}
+            onClick={() => setFreshSecret('')}
+          >
+            我已保存
+          </button>
+        </div>
+      )}
+
+      {tokens.length > 0 && (
+        <div className="space-y-2">
+          {tokens.map((token) => (
+            <div
+              key={token.id}
+              className="flex items-center gap-3 rounded-xl px-4 py-2.5"
+              style={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border-light)' }}
+            >
+              <KeyRound size={12} className="text-slate-400" />
+              <span className="text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                {token.name}
+              </span>
+              <span className="text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>
+                {token.source ? `仅限 ${token.source.name}` : '任意数据源'} · 最近使用 {formatTime(token.lastUsedAt)}
+              </span>
+              <button
+                onClick={() => revoke(token.id)}
+                className="ml-auto p-1 rounded text-slate-300 hover:text-red-500 transition-colors"
+                title="吊销令牌"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

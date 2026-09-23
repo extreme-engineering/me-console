@@ -63,6 +63,8 @@ const { fakeSupabase, queries } = vi.hoisted(() => {
       }
       if (this.table === 'habit_logs') return { id: 'row-1', habit: { title: '冥想' } };
       if (this.table === 'todos') return { id: 'row-1', title: '待办' };
+      // melog 条目桩为敏感分类 im，用于验证数据边界 403
+      if (this.table === 'melog_entries') return { id: 'row-1', category: 'im', title: '聊天' };
       return { id: 'row-1' };
     }
 
@@ -193,8 +195,32 @@ describe('子资源路由只打子表（防数据损坏）', () => {
   });
 });
 
-describe('响应形状契约（key 映射对齐 fastify）', () => {
-  it('GET /mindsets → { slogans }', async () => {
+describe('MeLog 数据边界（敏感分类默认不进云端）', () => {
+  it('GET /melog/entries 默认排除敏感分类 im', async () => {
+    await supabaseAdapter.get('/melog/entries');
+    const q = queries.find((x) => x.table === 'melog_entries');
+    expect(q).toBeDefined();
+    const allowed = ['health', 'note', 'media', 'location', 'custom'];
+    expect(q!.filters).toContainEqual(['in', 'category', allowed]);
+  });
+
+  it('GET /melog/entries?category=im 显式 403', async () => {
+    const status = await statusOf(supabaseAdapter.get('/melog/entries?category=im'));
+    expect(status).toBe(403);
+  });
+
+  it('GET /melog/entries/:id 命中敏感分类时 403', async () => {
+    const status = await statusOf(supabaseAdapter.get('/melog/entries/row-1'));
+    expect(status).toBe(403);
+  });
+
+  it('GET /melog/overview 报告 sensitiveExcluded 边界', async () => {
+    const res = await supabaseAdapter.get('/melog/overview');
+    expect((res.data as { sensitiveExcluded?: string[] }).sensitiveExcluded).toEqual(['im']);
+  });
+});
+
+describe('响应形状契约（key 映射对齐 fastify）', () => {  it('GET /mindsets → { slogans }', async () => {
     const res = await supabaseAdapter.get('/mindsets');
     expect(res.data).toEqual({ slogans: [{ id: 'row-1' }] });
     expect(queries[0].table).toBe('mindset_slogans');
