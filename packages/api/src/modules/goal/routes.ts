@@ -49,7 +49,7 @@ const updateKeyResultSchema = z.object({
 export const goalRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-  }, async (request, reply) => {
+  }, async (request, _reply) => {
     try {
       const userId = request.user.userId;
       const goals = await prisma.goal.findMany({

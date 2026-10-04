@@ -36,9 +36,9 @@ export interface Domain {
   userId: string;
   identifier: string;
   name: string;
-  icon?: string;
+  icon: string | null;
   weight: number;
-  description?: string;
+  description: string | null;
   order: number;
   createdAt: string;
   updatedAt: string;
@@ -54,8 +54,8 @@ export interface KeyResult {
   currentValue: number;
   targetValue: number;
   unit: string;
-  startDate?: string;
-  endDate?: string;
+  startDate: string | null;
+  endDate: string | null;
   order: number;
   createdAt: string;
   updatedAt: string;
@@ -66,15 +66,20 @@ export interface Goal {
   userId: string;
   domainId: string;
   title: string;
-  description?: string;
+  description: string | null;
   status: GoalStatus;
   priority: Priority;
-  startDate?: string;
-  endDate?: string;
+  startDate: string | null;
+  endDate: string | null;
   order: number;
+  mock?: boolean;
   createdAt: string;
   updatedAt: string;
+  domain?: Domain;
   keyResults?: KeyResult[];
+  todos?: Todo[];
+  habits?: Habit[];
+  topics?: Topic[];
 }
 
 export interface MindsetSlogan {
@@ -107,19 +112,22 @@ export interface Todo {
   id: string;
   userId: string;
   title: string;
-  description?: string;
+  description: string | null;
   status: TodoStatus;
   priority: Urgency;
-  dueDate?: string;
-  goalId?: string;
-  domainId?: string;
+  dueDate: string | null;
+  goalId: string | null;
+  domainId: string | null;
   source: string;
-  estimatedMinutes?: number;
-  energy?: string;
+  estimatedMinutes: number | null;
+  energy: 'high' | 'medium' | 'low' | null;
   order: number;
-  completedAt?: string;
+  completedAt: string | null;
+  mock?: boolean;
   createdAt: string;
   updatedAt: string;
+  goal?: Goal;
+  domain?: Domain;
 }
 
 export type HabitFrequency = 'daily' | 'weekly';
@@ -128,7 +136,7 @@ export interface HabitLog {
   id: string;
   habitId: string;
   date: string;
-  note?: string;
+  note: string | null;
   createdAt: string;
 }
 
@@ -136,14 +144,15 @@ export interface Habit {
   id: string;
   userId: string;
   title: string;
-  description?: string;
+  description: string | null;
   frequency: HabitFrequency;
-  targetPerWeek?: number;
-  goalId?: string;
-  domainId?: string;
-  color?: string;
+  targetPerWeek: number | null;
+  goalId: string | null;
+  domainId: string | null;
+  color: string | null;
   isActive: boolean;
   order: number;
+  mock?: boolean;
   createdAt: string;
   updatedAt: string;
   logs?: HabitLog[];
@@ -151,13 +160,14 @@ export interface Habit {
 
 // ==================== 认知 (Cognition) ====================
 
-export type TopicStatus = 'exploring' | 'researching' | 'practicing' | 'breakthrough' | 'archived';
+export type TopicStatus = 'exploring' | 'researching' | 'practicing' | 'breakthrough' | 'ongoing' | 'archived';
 
 export interface TopicNote {
   id: string;
   topicId: string;
-  noteType: string;
+  userId: string;
   content: string;
+  noteType: 'reflection' | 'insight' | 'breakthrough' | 'setback';
   createdAt: string;
 }
 
@@ -165,24 +175,33 @@ export interface Topic {
   id: string;
   userId: string;
   title: string;
-  description: string;
+  description: string | null;
   category: string;
   status: TopicStatus;
-  priority: string;
-  goalId?: string;
-  currentUnderstanding?: string;
-  actionPlan?: string;
+  priority: Priority;
+  currentUnderstanding: string | null;
+  actionPlan: string | null;
+  relatedDomainId: string | null;
+  goalId: string | null;
+  order: number;
   isMock?: boolean;
+  mock?: boolean;
   createdAt: string;
   updatedAt: string;
   notes?: TopicNote[];
+  insights?: InsightNote[];
+  readingItems?: ReadingItem[];
+  _count?: { notes: number };
 }
 
 export interface InsightNote {
   id: string;
   userId: string;
+  title: string;
   content: string;
-  topicId?: string;
+  tags: string | null;
+  category: string | null;
+  topicId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -194,15 +213,15 @@ export interface ReadingItem {
   id: string;
   userId: string;
   title: string;
-  author?: string;
+  author: string | null;
   type: ReadingType;
   status: ReadingStatus;
-  url?: string;
-  note?: string;
-  rating?: number;
-  topicId?: string;
-  startDate?: string;
-  endDate?: string;
+  url: string | null;
+  note: string | null;
+  rating: number | null;
+  topicId: string | null;
+  startDate: string | null;
+  endDate: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -213,62 +232,58 @@ export interface Reflection {
   id: string;
   userId: string;
   date: string;
-  celebrations: string[];
-  improvements: string[];
-  tomorrow?: string;
-  mood?: string;
-  tags?: string;
-  content?: string;
+  type: string;
+  celebrations: string | null;
+  improvements: string | null;
+  tomorrow: string | null;
+  content: string | null;
+  mood: string | null;
+  tags: string | null;
+  domainId: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type ReviewPeriod = 'week' | 'month' | 'quarter' | 'year';
-
 export interface PeriodicReview {
   id: string;
   userId: string;
-  period: ReviewPeriod;
+  period: string;
   startDate: string;
   endDate: string;
-  achievements: string[];
-  challenges: string[];
-  insights?: string;
-  nextFocus: string[];
+  achievements: string | null;
+  challenges: string | null;
+  insights: string | null;
+  nextFocus: string | null;
+  dataSummary: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 // ==================== 资源 (Resources) ====================
 
-export type RelationType = 'friend' | 'colleague' | 'mentor' | 'family' | 'other';
-export type ContactFreq = 'weekly' | 'monthly' | 'quarterly';
-
 export interface Contact {
   id: string;
   userId: string;
   name: string;
-  title?: string;
-  company?: string;
-  relation: RelationType;
-  tags?: string[];
-  notes?: string;
-  contactFreq?: ContactFreq;
-  lastContact?: string;
-  domainId?: string;
+  title: string | null;
+  company: string | null;
+  relation: string | null;
+  tags: string | null;
+  notes: string | null;
+  contactFreq: string | null;
+  lastContact: string | null;
+  domainId: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type HealthRecordType = 'sleep' | 'exercise' | 'weight' | 'mood' | 'energy' | 'water' | 'custom';
-
 export interface HealthRecord {
   id: string;
   userId: string;
-  type: HealthRecordType;
+  type: string;
   value: number;
   unit: string;
-  note?: string;
+  note: string | null;
   recordedAt: string;
   createdAt: string;
 }
@@ -552,6 +567,96 @@ export interface BrandOverview {
     byPillar: { id: string; name: string; count: number }[];
   };
 }
+
+// ==================== 商机 (Opportunity) ====================
+
+export type OpportunityTrack = 'fde' | 'meditation' | 'trade';
+
+export type OpportunityStage =
+  | 'lead'
+  | 'contacted'
+  | 'proposal'
+  | 'negotiation'
+  | 'won'
+  | 'delivered'
+  | 'lost';
+
+export const OPPORTUNITY_TRACKS = ['fde', 'meditation', 'trade'] as const;
+
+export const OPPORTUNITY_STAGES = [
+  'lead',
+  'contacted',
+  'proposal',
+  'negotiation',
+  'won',
+  'delivered',
+  'lost',
+] as const;
+
+/** 活跃阶段（未到终局），用于跟进提醒与漏斗统计 */
+export const ACTIVE_OPPORTUNITY_STAGES: OpportunityStage[] = [
+  'lead',
+  'contacted',
+  'proposal',
+  'negotiation',
+];
+
+export const OPPORTUNITY_TRACK_LABELS: Record<OpportunityTrack, string> = {
+  fde: 'FDE',
+  meditation: '冥想师',
+  trade: '外贸',
+};
+
+export const OPPORTUNITY_STAGE_LABELS: Record<OpportunityStage, string> = {
+  lead: '线索',
+  contacted: '已接触',
+  proposal: '方案',
+  negotiation: '谈判',
+  won: '已成交',
+  delivered: '已交付',
+  lost: '已关闭',
+};
+
+/** 合伙人名单：商机归属维度，也可用于板块内过滤 */
+export const PARTNERS = ['潘震', '叶佳', '曹军', '程朗'] as const;
+export type Partner = (typeof PARTNERS)[number];
+
+export interface Opportunity {
+  id: string;
+  userId: string;
+  track: OpportunityTrack;
+  title: string;
+  stage: OpportunityStage;
+  company?: string | null;
+  category?: string | null;
+  source?: string | null;
+  partner?: string | null;
+  contact?: string | null;
+  /** 预估金额（元） */
+  amount?: number | null;
+  link?: string | null;
+  notes?: string | null;
+  order: number;
+  isMock?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateOpportunityInput {
+  track: OpportunityTrack;
+  title: string;
+  stage?: OpportunityStage;
+  company?: string | null;
+  category?: string | null;
+  source?: string | null;
+  partner?: string | null;
+  contact?: string | null;
+  amount?: number | null;
+  link?: string | null;
+  notes?: string | null;
+}
+
+export type UpdateOpportunityInput = Partial<CreateOpportunityInput>;
 
 // ==================== API 响应类型 ====================
 

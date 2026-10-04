@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import api from '../../lib/api';
+import { useState } from 'react';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import MockBadge from '../../components/MockBadge';
@@ -90,6 +90,10 @@ interface TopicFormData {
   actionPlan: string;
 }
 
+interface TopicsResponse {
+  topics: Topic[];
+}
+
 const emptyForm: TopicFormData = {
   title: '',
   description: '',
@@ -101,8 +105,9 @@ const emptyForm: TopicFormData = {
 };
 
 export default function Topics() {
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [loading, setLoading] = useState(true);
+  const topicsQuery = useApiQuery<TopicsResponse>(['topics'], '/topics');
+  const topics = topicsQuery.data?.topics ?? [];
+
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [showModal, setShowModal] = useState(false);
   const [editingTopic, setEditingTopic] = useState<Topic | null>(null);
@@ -115,24 +120,29 @@ export default function Topics() {
   const [deleting, setDeleting] = useState(false);
   const [editingCategories, setEditingCategories] = useState(false);
 
-  const loadTopics = useCallback(async () => {
-    try {
-      setLoading(true);
-      const res = await api.get('/topics');
-      setTopics(res.data?.topics || []);
-    } catch (err) {
-      console.error(err);
-      setTopics([]);
-    }
-
-    finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadTopics();
-  }, [loadTopics]);
+  const createTopic = useApiMutation(
+    (data: TopicFormData) => apiRequest('post', '/topics', data),
+    [['topics']]
+  );
+  const updateTopic = useApiMutation(
+    ({ id, data }: { id: string; data: TopicFormData }) => apiRequest('patch', `/topics/${id}`, data),
+    [['topics']]
+  );
+  const deleteTopic = useApiMutation((id: string) => apiRequest('delete', `/topics/${id}`), [['topics']]);
+  const addTopicNote = useApiMutation(
+    ({ topicId, data }: { topicId: string; data: Record<string, unknown> }) =>
+      apiRequest('post', `/topics/${topicId}/notes`, data),
+    [['topics']]
+  );
+  const deleteTopicNote = useApiMutation(
+    ({ topicId, noteId }: { topicId: string; noteId: string }) =>
+      apiRequest('delete', `/topics/${topicId}/notes/${noteId}`),
+    [['topics']]
+  );
+  const claimTopicMutation = useApiMutation(
+    ({ id }: { id: string }) => apiRequest('patch', `/topics/${id}`, { isMock: false, mock: false }),
+    [['topics']]
+  );
 
   const openAddModal = () => {
     setEditingTopic(null);
@@ -163,20 +173,16 @@ export default function Topics() {
   const handleSubmit = async () => {
     try {
       if (editingTopic) {
-        await api.patch(`/topics/${editingTopic.id}`, form);
+        await updateTopic.mutateAsync({ id: editingTopic.id, data: form });
       } else {
-        await api.post('/topics', form);
+        await createTopic.mutateAsync(form);
       }
       closeModal();
-      loadTopics();
     } catch {}
   };
 
-  const claimTopic = async (topic: Topic) => {
-    try {
-      await api.patch(`/topics/${topic.id}`, { isMock: false, mock: false });
-      loadTopics();
-    } catch {}
+  const claimTopic = (topic: Topic) => {
+    claimTopicMutation.mutate({ id: topic.id });
   };
 
   const handleDelete = async (id: string) => {
@@ -187,32 +193,29 @@ export default function Topics() {
     if (!confirmDelete) return;
     setDeleting(true);
     try {
-      await api.delete(`/topics/${confirmDelete}`);
+      await deleteTopic.mutateAsync(confirmDelete);
       setConfirmDelete(null);
       setExpandedId(null);
-      loadTopics();
     } catch {} finally { setDeleting(false); }
   };
 
   const handleAddNote = async (topicId: string) => {
     if (!noteContent.trim()) return;
     try {
-      await api.post(`/topics/${topicId}/notes`, {
-        noteType: noteType,
-        content: noteContent,
+      await addTopicNote.mutateAsync({
+        topicId,
+        data: { noteType: noteType, content: noteContent },
       });
       setNoteContent('');
       setNoteType('reflection');
       setShowNoteForm(null);
-      loadTopics();
     } catch {}
   };
 
   const handleDeleteNote = async (topicId: string, noteId: string) => {
     if (!confirm('确定删除这条笔记？')) return;
     try {
-      await api.delete(`/topics/${topicId}/notes/${noteId}`);
-      loadTopics();
+      await deleteTopicNote.mutateAsync({ topicId, noteId });
     } catch {}
   };
 
@@ -232,7 +235,7 @@ export default function Topics() {
   const truncate = (str: string, len: number) =>
     str && str.length > len ? str.slice(0, len) + '…' : str;
 
-  if (loading) {
+  if (topicsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner />

@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AxiosInstance } from 'axios';
 import { Plus, Trash2, Check } from 'lucide-react';
 import api from '../../lib/api';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import FormField from '../../components/FormField';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import MockBadge, { MockClaimField } from '../../components/MockBadge';
 import type { BrandPillar, BrandProfile } from '@meos/shared';
+import { toast } from '../../stores/toastStore';
 
 const FIELDS: { key: keyof BrandProfile; label: string; textarea?: boolean; placeholder: string }[] = [
   { key: 'mission', label: '定位宣言', textarea: true, placeholder: '我为谁提供什么独特价值？' },
@@ -17,32 +19,49 @@ const FIELDS: { key: keyof BrandProfile; label: string; textarea?: boolean; plac
   { key: 'visualNotes', label: '视觉规范', textarea: true, placeholder: '头像、配色、字体等约定' },
 ];
 
+interface ProfileResponse {
+  profile: BrandProfile;
+}
+
+interface PillarsResponse {
+  pillars: BrandPillar[];
+}
+
 export default function Profile() {
+  const profileQuery = useApiQuery<ProfileResponse>(['brand/profile'], '/brand/profile');
+  const pillarsQuery = useApiQuery<PillarsResponse>(['brand/pillars'], '/brand/pillars');
+  const pillars = pillarsQuery.data?.pillars ?? [];
+
   const [profile, setProfile] = useState<Partial<BrandProfile>>({});
-  const [pillars, setPillars] = useState<BrandPillar[]>([]);
   const [newPillar, setNewPillar] = useState('');
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const [profileRes, pillarsRes] = await Promise.all([
-        api.get('/brand/profile'),
-        api.get('/brand/pillars'),
-      ]);
-      setProfile(profileRes.data.profile || {});
-      setPillars(pillarsRes.data.pillars || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // profile 为可编辑表单态：查询数据到达后同步（对应原 load() 中的一次性赋值）
   useEffect(() => {
-    load();
-  }, [load]);
+    setProfile(profileQuery.data?.profile || {});
+  }, [profileQuery.data]);
+
+  const saveProfile = useApiMutation(
+    async (data: Record<string, unknown>) => {
+      // api 联合类型（AxiosInstance | LocalDBAdapter）未声明 put，但 /brand/profile 后端仅注册 PUT
+      const res = await (api as AxiosInstance).put('/brand/profile', data);
+      return res.data as { profile: BrandProfile };
+    },
+    [['brand/profile'], ['brand/overview']]
+  );
+  const addPillar = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/brand/pillars', data), [
+    ['brand/pillars'],
+    ['brand/overview'],
+  ]);
+  const deletePillar = useApiMutation((id: string) => apiRequest('delete', `/brand/pillars/${id}`), [
+    ['brand/pillars'],
+    ['brand/overview'],
+  ]);
+  const updatePillar = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/brand/pillars/${id}`, data),
+    [['brand/pillars'], ['brand/overview']]
+  );
 
   const handleSave = async () => {
     setSaving(true);
@@ -50,13 +69,12 @@ export default function Profile() {
     try {
       const payload = Object.fromEntries(FIELDS.map((f) => [f.key, profile[f.key] ?? null]));
       payload.isMock = profile.isMock ?? false;
-      // api 联合类型（AxiosInstance | LocalDBAdapter）未声明 put，但 /brand/profile 后端仅注册 PUT
-      const res = await (api as AxiosInstance).put('/brand/profile', payload);
-      setProfile(res.data.profile);
+      const res = await saveProfile.mutateAsync(payload);
+      setProfile(res.profile);
       setJustSaved(true);
       setTimeout(() => setJustSaved(false), 2000);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     } finally {
       setSaving(false);
     }
@@ -66,34 +84,30 @@ export default function Profile() {
     const name = newPillar.trim();
     if (!name) return;
     try {
-      await api.post('/brand/pillars', { name });
+      await addPillar.mutateAsync({ name });
       setNewPillar('');
-      const res = await api.get('/brand/pillars');
-      setPillars(res.data.pillars || []);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const handleDeletePillar = async (id: string) => {
     try {
-      await api.delete(`/brand/pillars/${id}`);
-      setPillars((prev) => prev.filter((p) => p.id !== id));
-    } catch (err) {
-      console.error(err);
+      await deletePillar.mutateAsync(id);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const claimPillar = async (pillar: BrandPillar) => {
     try {
-      await api.patch(`/brand/pillars/${pillar.id}`, { isMock: false });
-      setPillars((prev) => prev.map((p) => (p.id === pillar.id ? { ...p, isMock: false } : p)));
-    } catch (err) {
-      console.error(err);
+      await updatePillar.mutateAsync({ id: pillar.id, data: { isMock: false } });
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
-  if (loading) {
+  if (profileQuery.isLoading || pillarsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner />

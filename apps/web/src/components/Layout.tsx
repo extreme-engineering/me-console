@@ -50,6 +50,11 @@ const navItems: NavItem[] = [
     path: '/brand',
     icon: 'm12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z',
   },
+  {
+    label: '商机',
+    path: '/opportunity',
+    icon: 'M3 17l6-6 4 4 8-8m0 0h-6m6 0v6',
+  },
 ];
 
 export default function Layout() {

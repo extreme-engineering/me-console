@@ -1,28 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Plus, Target, Trash2, ArrowLeft, Sparkles, Flag, CheckSquare, Repeat } from 'lucide-react';
-import api from '../../lib/api';
+import type { Goal, Habit, Todo, Vision } from '@meos/shared';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import WorkflowCanvas from '../../components/workflow/WorkflowCanvas';
 import { Node, Edge, Connection, NodeChange, EdgeChange } from '@xyflow/react';
-
-interface Vision {
-  id: string;
-  content: string;
-}
-
-interface Goal {
-  id: string;
-  title: string;
-}
-
-interface Todo {
-  id: string;
-  title: string;
-}
-
-interface Habit {
-  id: string;
-  title: string;
-}
+import { toast } from '../../stores/toastStore';
 
 interface WorkflowStep {
   id: string;
@@ -54,6 +36,38 @@ interface Workflow {
   connections: WorkflowConnection[];
   createdAt: string;
   updatedAt: string;
+}
+
+interface WorkflowsResponse {
+  workflows?: Workflow[];
+}
+
+interface WorkflowDetailResponse {
+  workflow?: Workflow;
+}
+
+interface ActiveVisionResponse {
+  vision?: Vision | null;
+}
+
+interface GoalsResponse {
+  goals?: Goal[];
+}
+
+interface TodosResponse {
+  todos?: Todo[];
+}
+
+interface HabitsResponse {
+  habits?: Habit[];
+}
+
+interface ConnectionResponse {
+  connection?: { id: string };
+}
+
+interface StepResponse {
+  step?: WorkflowStep;
 }
 
 const entityTypeColors: Record<string, string> = {
@@ -93,9 +107,9 @@ const getNodeStyle = (entityType: string) => ({
 });
 
 export default function Workflow() {
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const workflowsQuery = useApiQuery<WorkflowsResponse>(['workflows'], '/workflows');
+  const workflows = workflowsQuery.data?.workflows ?? [];
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
-  const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
@@ -103,74 +117,36 @@ export default function Workflow() {
   const [edges, setEdges] = useState<Edge[]>([]);
 
   // Entity data for the side panel
-  const [visions, setVisions] = useState<Vision[]>([]);
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [habits, setHabits] = useState<Habit[]>([]);
   const [activeEntityType, setActiveEntityType] = useState<EntityType>('goal');
   const [showEntityPanel, setShowEntityPanel] = useState(true);
+  const entityPanelOpen = !!selectedWorkflow;
 
-  const loadEntities = useCallback(async () => {
-    try {
-      if (activeEntityType === 'vision') {
-        const res = await api.get('/visions');
-        // 契约：GET /visions 返回当前生效的单条 { vision }（历史走 /visions/history）
-        const vision = res.data?.vision;
-        setVisions(vision ? [vision] : []);
-      } else if (activeEntityType === 'goal') {
-        const res = await api.get('/goals');
-        setGoals(res.data?.goals || []);
-      } else if (activeEntityType === 'todo') {
-        const res = await api.get('/todos');
-        setTodos(res.data?.todos || []);
-      } else if (activeEntityType === 'habit') {
-        const res = await api.get('/habits');
-        setHabits(res.data?.habits || []);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, [activeEntityType]);
+  const visionsQuery = useApiQuery<ActiveVisionResponse>(['visions'], '/visions', { enabled: entityPanelOpen && activeEntityType === 'vision' });
+  const goalsQuery = useApiQuery<GoalsResponse>(['goals'], '/goals', { enabled: entityPanelOpen && activeEntityType === 'goal' });
+  const todosQuery = useApiQuery<TodosResponse>(['todos'], '/todos', { enabled: entityPanelOpen && activeEntityType === 'todo' });
+  const habitsQuery = useApiQuery<HabitsResponse>(['habits'], '/habits', { enabled: entityPanelOpen && activeEntityType === 'habit' });
+  // 契约：GET /visions 返回当前生效的单条 { vision }（历史走 /visions/history）
+  const activeVision = visionsQuery.data?.vision;
+  const visions = activeVision ? [activeVision] : [];
+  const goals = goalsQuery.data?.goals ?? [];
+  const todos = todosQuery.data?.todos ?? [];
+  const habits = habitsQuery.data?.habits ?? [];
 
-  const loadWorkflows = async () => {
-    try {
-      const res = await api.get('/workflows');
-      setWorkflows(res.data?.workflows || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const selectedWorkflowId = selectedWorkflow?.id;
+  const workflowDetailQuery = useApiQuery<WorkflowDetailResponse>(['workflows', selectedWorkflowId ?? ''], `/workflows/${selectedWorkflowId}`, { enabled: !!selectedWorkflowId });
+  const detailWorkflow = workflowDetailQuery.data?.workflow;
 
-  const loadWorkflowDetail = useCallback(async (id: string) => {
-    try {
-      const res = await api.get(`/workflows/${id}`);
-      const wf = res.data?.workflow;
-      if (wf) {
-        setSelectedWorkflow(wf);
-        toNodes(wf.steps, wf.connections);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
+  const createWorkflowMutation = useApiMutation((data: Record<string, unknown>) => apiRequest<WorkflowDetailResponse>('post', '/workflows', data), [['workflows']]);
+  const deleteWorkflowMutation = useApiMutation((id: string) => apiRequest('delete', `/workflows/${id}`), [['workflows']]);
+  const addConnectionMutation = useApiMutation(({ workflowId, data }: { workflowId: string; data: Record<string, unknown> }) => apiRequest<ConnectionResponse>('post', `/workflows/${workflowId}/connections`, data));
+  const addStepMutation = useApiMutation(({ workflowId, data }: { workflowId: string; data: Record<string, unknown> }) => apiRequest<StepResponse>('post', `/workflows/${workflowId}/steps`, data));
 
   useEffect(() => {
-    loadWorkflows();
-  }, []);
-
-  useEffect(() => {
-    if (selectedWorkflow) {
-      loadWorkflowDetail(selectedWorkflow.id);
+    if (selectedWorkflow && detailWorkflow && detailWorkflow.id === selectedWorkflow.id) {
+      setSelectedWorkflow(detailWorkflow);
+      toNodes(detailWorkflow.steps, detailWorkflow.connections);
     }
-  }, [selectedWorkflow, loadWorkflowDetail]);
-
-  useEffect(() => {
-    if (selectedWorkflow) {
-      loadEntities();
-    }
-  }, [selectedWorkflow, loadEntities]);
+  }, [detailWorkflow, selectedWorkflow]);
 
   const toNodes = (steps: WorkflowStep[], connections: WorkflowConnection[]) => {
     const ns: Node[] = steps.map(s => ({
@@ -193,10 +169,9 @@ export default function Workflow() {
   const createWorkflow = async () => {
     if (!newName.trim()) return;
     try {
-      const res = await api.post('/workflows', { name: newName, description: newDesc });
-      const wf = res.data?.workflow;
+      const res = await createWorkflowMutation.mutateAsync({ name: newName, description: newDesc });
+      const wf = res?.workflow;
       if (wf) {
-        setWorkflows(prev => [wf, ...prev]);
         setSelectedWorkflow(wf);
         setNodes([]);
         setEdges([]);
@@ -204,23 +179,22 @@ export default function Workflow() {
       setShowCreate(false);
       setNewName('');
       setNewDesc('');
-    } catch (e) {
-      console.error(e);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const deleteWorkflow = async (id: string) => {
     if (!confirm('确定删除此工作流？')) return;
     try {
-      await api.delete(`/workflows/${id}`);
-      setWorkflows(prev => prev.filter(w => w.id !== id));
+      await deleteWorkflowMutation.mutateAsync(id);
       if (selectedWorkflow?.id === id) {
         setSelectedWorkflow(null);
         setNodes([]);
         setEdges([]);
       }
-    } catch (e) {
-      console.error(e);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
@@ -238,20 +212,23 @@ export default function Workflow() {
   const onConnect = useCallback(async (connection: Connection) => {
     if (!selectedWorkflow) return;
     try {
-      const res = await api.post(`/workflows/${selectedWorkflow.id}/connections`, {
-        sourceStepId: connection.source,
-        targetStepId: connection.target,
-        sourceHandle: connection.sourceHandle || 'bottom',
-        targetHandle: connection.targetHandle || 'top',
+      const res = await addConnectionMutation.mutateAsync({
+        workflowId: selectedWorkflow.id,
+        data: {
+          sourceStepId: connection.source,
+          targetStepId: connection.target,
+          sourceHandle: connection.sourceHandle || 'bottom',
+          targetHandle: connection.targetHandle || 'top',
+        },
       });
-      const conn = res.data?.connection;
+      const conn = res?.connection;
       if (conn) {
         setEdges(eds => addEdge({ ...connection, id: conn.id }, eds));
       }
-    } catch (e) {
-      console.error(e);
+    } catch {
+      toast.error('操作失败，请重试');
     }
-  }, [selectedWorkflow]);
+  }, [selectedWorkflow, addConnectionMutation]);
 
   const addNodeToCanvas = async (entityType: EntityType, entity: Vision | Goal | Todo | Habit, label: string) => {
     if (!selectedWorkflow) return;
@@ -264,8 +241,8 @@ export default function Workflow() {
       positionY: Math.random() * 300 + 100,
     };
     try {
-      const res = await api.post(`/workflows/${selectedWorkflow.id}/steps`, stepData);
-      const step = res.data?.step;
+      const res = await addStepMutation.mutateAsync({ workflowId: selectedWorkflow.id, data: stepData });
+      const step = res?.step;
       if (step) {
         const newNode: Node = {
           id: step.id,
@@ -275,12 +252,12 @@ export default function Workflow() {
         };
         setNodes((nds) => [...nds, newNode]);
       }
-    } catch (e) {
-      console.error(e);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
-  if (loading) {
+  if (workflowsQuery.isLoading) {
     return <div className="p-8 text-center">加载中...</div>;
   }
 

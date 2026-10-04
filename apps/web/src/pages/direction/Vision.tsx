@@ -1,18 +1,19 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import { ChevronDown, ChevronUp, BookOpen, Target, Sparkles, Compass, FileText, Star } from 'lucide-react';
-import api from '../../lib/api';
+import type { Vision } from '@meos/shared';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import Modal from '../../components/Modal';
 import MockBadge from '../../components/MockBadge';
 import { isMockItem } from '../../lib/mockFlag';
 import MindsetView from '../../components/MindsetView';
+import { toast } from '../../stores/toastStore';
 
-interface VisionData {
-  id: string;
-  content: string;
-  version: number;
+interface VisionItem extends Vision {
   mock?: boolean;
-  updatedAt: string;
-  createdAt: string;
+}
+
+interface VisionResponse {
+  vision?: VisionItem | null;
 }
 
 interface Framework {
@@ -171,8 +172,8 @@ const PRACTICES = [
 ];
 
 export default function Vision() {
-  const [vision, setVision] = useState<VisionData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const visionQuery = useApiQuery<VisionResponse>(['visions'], '/visions');
+  const vision = visionQuery.data?.vision || null;
   const [showModal, setShowModal] = useState(false);
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -180,23 +181,8 @@ export default function Vision() {
   const [selectedFramework, setSelectedFramework] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'vision' | 'mindset'>('vision');
 
-  const loadVision = useCallback(async () => {
-    try {
-      const response = await api.get('/visions');
-      setVision(response.data?.vision || null);
-    } catch (err) {
-      console.error(err);
-      setVision(null);
-    }
-
-    finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadVision();
-  }, [loadVision]);
+  const createVision = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/visions', data), [['visions']]);
+  const updateVision = useApiMutation(({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/visions/${id}`, data), [['visions']]);
 
   const handleOpenCreate = () => {
     setContent('');
@@ -213,15 +199,13 @@ export default function Vision() {
     setSaving(true);
     try {
       if (vision) {
-        const response = await api.patch(`/visions/${vision.id}`, { content });
-        setVision(response.data.vision);
+        await updateVision.mutateAsync({ id: vision.id, data: { content } });
       } else {
-        const response = await api.post('/visions', { content, status: 'active' });
-        setVision(response.data.vision);
+        await createVision.mutateAsync({ content, status: 'active' });
       }
       setShowModal(false);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
 
     finally {
@@ -251,7 +235,7 @@ ${framework.structure.map((s, i) => `${i + 1}. ${s}`).join('\n')}
     });
   };
 
-  if (loading) {
+  if (visionQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="w-5 h-5 border border-slate-200 border-t-slate-900 rounded-full animate-spin" />
@@ -432,8 +416,7 @@ ${framework.structure.map((s, i) => `${i + 1}. ${s}`).join('\n')}
                   {isMockItem(vision) && (
                     <MockBadge
                       onClick={async () => {
-                        await api.patch(`/visions/${vision.id}`, { mock: false });
-                        await loadVision();
+                        await updateVision.mutateAsync({ id: vision.id, data: { mock: false } });
                       }}
                     />
                   )}

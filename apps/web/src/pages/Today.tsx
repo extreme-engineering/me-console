@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import { format, startOfDay, isSameDay } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import {
@@ -13,34 +13,20 @@ import {
   Moon,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import api from '../lib/api';
+import type { Goal, Habit, Reflection, Topic, Todo, Vision } from '@meos/shared';
+import { apiRequest, useApiMutation, useApiQuery } from '../lib/api-queries';
 import LoadingSpinner from '../components/LoadingSpinner';
 import MockBadge from '../components/MockBadge';
 import OnboardingBanner from '../components/onboarding/OnboardingBanner';
 import { isMockItem } from '../lib/mockFlag';
+import { toast } from '../stores/toastStore';
 
-interface Todo {
-  id: string;
-  title: string;
-  status: 'inbox' | 'todo' | 'doing' | 'done';
-  priority: 'urgent' | 'high' | 'medium' | 'low';
-  dueDate?: string;
-  goalId?: string;
-  mock?: boolean;
-}
-
-interface HabitLog { id: string; date: string; }
-
-interface Habit {
-  id: string;
-  title: string;
-  color: string;
-  frequency: 'daily' | 'weekly';
-  logs: HabitLog[];
-  mock?: boolean;
-}
-
-interface Goal { id: string; title: string; status: string; }
+interface TodosResponse { todos: Todo[] }
+interface HabitsResponse { habits: Habit[] }
+interface GoalsResponse { goals: Goal[] }
+interface TopicsResponse { topics: Topic[] }
+interface ReflectionsResponse { reflections: Reflection[] }
+interface VisionsResponse { vision: Vision | null }
 
 const PRIORITY_DOT: Record<string, string> = {
   urgent: '#DC2626',
@@ -60,55 +46,43 @@ function getGreeting() {
 }
 
 export default function Today() {
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [habits, setHabits] = useState<Habit[]>([]);
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [topics, setTopics] = useState<{ id: string; status: string }[]>([]);
-  const [reflections, setReflections] = useState<{ id: string; date?: string }[]>([]);
-  const [vision, setVision] = useState<{ content: string } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const todosQuery = useApiQuery<TodosResponse>(['todos'], '/todos');
+  const habitsQuery = useApiQuery<HabitsResponse>(['habits'], '/habits');
+  const goalsQuery = useApiQuery<GoalsResponse>(['goals'], '/goals');
+  const topicsQuery = useApiQuery<TopicsResponse>(['topics'], '/topics');
+  const reflectionsQuery = useApiQuery<ReflectionsResponse>(['reflections'], '/reflections');
+  const visionsQuery = useApiQuery<VisionsResponse>(['visions'], '/visions');
+
   const [newTodo, setNewTodo] = useState('');
   const [addingTodo, setAddingTodo] = useState(false);
   const [togglingHabit, setTogglingHabit] = useState<string | null>(null);
   const [togglingTodo, setTogglingTodo] = useState<string | null>(null);
 
+  const todos = todosQuery.data?.todos ?? [];
+  const habits = habitsQuery.data?.habits ?? [];
+  const goals = goalsQuery.data?.goals ?? [];
+  const topics = topicsQuery.data?.topics ?? [];
+  const reflections = reflectionsQuery.data?.reflections ?? [];
+  const vision = visionsQuery.data?.vision || null;
+
+  const createTodo = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/todos', data), [['todos']]);
+  const updateTodo = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/todos/${id}`, data),
+    [['todos'], ['goals']]
+  );
+  const logHabit = useApiMutation(
+    ({ habitId, date }: { habitId: string; date: string }) => apiRequest('post', `/habits/${habitId}/log`, { date }),
+    [['habits'], ['goals']]
+  );
+  const updateHabit = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/habits/${id}`, data),
+    [['habits']]
+  );
+
   const today = startOfDay(new Date());
   const todayStr = format(today, 'yyyy-MM-dd');
   const greeting = getGreeting();
   const GreetingIcon = greeting.icon;
-
-  const loadData = useCallback(async () => {
-    try {
-      const [todosRes, habitsRes, goalsRes, topicsRes, reflectionsRes, visionRes] = await Promise.allSettled([
-        api.get('/todos'),
-        api.get('/habits'),
-        api.get('/goals'),
-        api.get('/topics'),
-        api.get('/reflections'),
-        api.get('/visions'),
-      ]);
-      setTodos(todosRes.status === 'fulfilled' ? todosRes.value.data?.todos ?? [] : []);
-      setHabits(habitsRes.status === 'fulfilled' ? habitsRes.value.data?.habits ?? [] : []);
-      setGoals(goalsRes.status === 'fulfilled' ? goalsRes.value.data?.goals ?? [] : []);
-      setTopics(topicsRes.status === 'fulfilled' ? topicsRes.value.data?.topics ?? [] : []);
-      setReflections(reflectionsRes.status === 'fulfilled' ? reflectionsRes.value.data?.reflections ?? [] : []);
-      setVision(visionRes.status === 'fulfilled' ? visionRes.value.data?.vision || null : null);
-    } catch (err) {
-      console.error(err);
-      setTodos([]);
-      setHabits([]);
-      setGoals([]);
-      setTopics([]);
-      setReflections([]);
-      setVision(null);
-    }
-
-    finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { loadData(); }, [loadData]);
 
   const pendingTodos = todos
     .filter((t) => t.status !== 'done')
@@ -129,9 +103,8 @@ export default function Today() {
     if (!title) return;
     setAddingTodo(true);
     try {
-      await api.post('/todos', { title, status: 'todo', priority: 'medium' });
+      await createTodo.mutateAsync({ title, status: 'todo', priority: 'medium' });
       setNewTodo('');
-      await loadData();
     } finally {
       setAddingTodo(false);
     }
@@ -144,8 +117,7 @@ export default function Today() {
       const payload = isDone
         ? { status: 'todo' }
         : { status: 'done', completedAt: new Date().toISOString() };
-      await api.patch(`/todos/${todo.id}`, payload);
-      await loadData();
+      await updateTodo.mutateAsync({ id: todo.id, data: payload });
     } finally {
       setTogglingTodo(null);
     }
@@ -154,16 +126,15 @@ export default function Today() {
   const toggleHabit = async (habit: Habit) => {
     setTogglingHabit(habit.id);
     try {
-      await api.post(`/habits/${habit.id}/log`, { date: todayStr });
-      await loadData();
-    } catch (err) {
-      console.error(err);
+      await logHabit.mutateAsync({ habitId: habit.id, date: todayStr });
+    } catch {
+      toast.error('操作失败，请重试');
     } finally {
       setTogglingHabit(null);
     }
   };
 
-  const goalName = (goalId?: string) => {
+  const goalName = (goalId?: string | null) => {
     if (!goalId) return null;
     return goals.find((g) => g.id === goalId)?.title;
   };
@@ -171,23 +142,21 @@ export default function Today() {
   // 认领演示数据：写 mock:false 去除徽标（仅本地演示模式存在 mock 记录）
   const claimTodo = async (todo: Todo) => {
     try {
-      await api.patch(`/todos/${todo.id}`, { mock: false });
-      await loadData();
-    } catch (err) {
-      console.error(err);
+      await updateTodo.mutateAsync({ id: todo.id, data: { mock: false } });
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const claimHabit = async (habit: Habit) => {
     try {
-      await api.patch(`/habits/${habit.id}`, { mock: false });
-      await loadData();
-    } catch (err) {
-      console.error(err);
+      await updateHabit.mutateAsync({ id: habit.id, data: { mock: false } });
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
-  if (loading) {
+  if (todosQuery.isLoading || habitsQuery.isLoading || goalsQuery.isLoading || topicsQuery.isLoading || reflectionsQuery.isLoading || visionsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner />

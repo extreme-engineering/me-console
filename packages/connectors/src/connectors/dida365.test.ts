@@ -166,6 +166,8 @@ describe('dida365 适配器', () => {
       token: 'token_abc',
       apiBase: 'https://api.dida365.com',
       backfillDays: 30,
+      // 注入固定窗口终点：夹具日期为 2026-09-01 ~ 09-03，跟随真实时间会漂出 30 天窗口
+      today: '2026-09-10T00:00:00.000Z',
       fetchImpl,
     });
     expect(collected.habitEntries).toHaveLength(3);
@@ -183,7 +185,7 @@ describe('dida365 适配器', () => {
       }) as typeof fetch,
     });
 
-    const result = await runDida365Connector({ token: 'token_abc', client, fetchImpl });
+    const result = await runDida365Connector({ token: 'token_abc', client, fetchImpl, today: '2026-09-10T00:00:00.000Z' });
     expect(result.created).toBe(5);
     expect(result.tasks).toBe(2);
     expect(pushed.map((p) => p.category).sort()).toEqual(['custom', 'note']);

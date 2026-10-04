@@ -6,7 +6,13 @@ import reactHooks from 'eslint-plugin-react-hooks';
 
 export default [
   {
-    ignores: ['dist/', 'node_modules/', '.turbo/'],
+    ignores: [
+      'dist/',
+      'node_modules/',
+      '.turbo/',
+      // Meoo Cloud 自动生成（client.ts / types.ts），请勿手改，不纳入 lint
+      'src/supabase/',
+    ],
   },
   {
     files: ['**/*.ts', '**/*.tsx'],

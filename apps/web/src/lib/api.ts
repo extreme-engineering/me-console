@@ -5,12 +5,14 @@ import { supabaseAdapter } from './supabaseAdapter';
 
 const isChromeExtension = typeof chrome !== 'undefined' && chrome.storage;
 const dataMode =
-  isChromeExtension ? 'local'
+  isChromeExtension || import.meta.env.VITE_USE_LOCAL === '1' ? 'local'
   : import.meta.env.VITE_USE_REMOTE === '1' ? 'remote'
   : 'supabase';
 
 const remoteApi = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3001/api',
+  // 服务端绑定 127.0.0.1（IPv4），客户端默认也走 IPv4，
+  // 避免 localhost 被解析到 ::1 时命中同端口的其他进程
+  baseURL: import.meta.env.VITE_API_URL || 'http://127.0.0.1:3001/api',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -268,6 +270,14 @@ const routeHandlers: Record<string, (method: string, id: string, segments: strin
     if (method === 'PATCH' && id) return db.contacts.update(id, data as Parameters<typeof db.contacts.update>[1]);
     if (method === 'DELETE' && id) { db.contacts.delete(id); return { success: true }; }
     throw { response: { data: { error: `Unhandled contacts: ${method}` } } };
+  },
+
+  opportunities: (method, id, _s, data, db) => {
+    if (method === 'GET') return db.opportunities.getAll();
+    if (method === 'POST' && !id) return db.opportunities.create(data as Parameters<typeof db.opportunities.create>[0]);
+    if (method === 'PATCH' && id) return db.opportunities.update(id, data as Parameters<typeof db.opportunities.update>[1]);
+    if (method === 'DELETE' && id) { db.opportunities.delete(id); return { success: true }; }
+    throw { response: { data: { error: `Unhandled opportunities: ${method}` } } };
   },
 
   reading: (method, id, _s, data, db) => {

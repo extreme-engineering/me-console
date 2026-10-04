@@ -43,7 +43,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
   // List workflows
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-  }, async (request, reply) => {
+  }, async (request, _reply) => {
     try {
       const userId = request.user.userId;
       const workflows = await prisma.workflow.findMany({

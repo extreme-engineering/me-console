@@ -59,3 +59,7 @@ coverage/
 .v2c/
 .video_agent/
 .zcode/
+
+# Playwright 运行产物
+apps/web/test-results/
+apps/web/playwright-report/

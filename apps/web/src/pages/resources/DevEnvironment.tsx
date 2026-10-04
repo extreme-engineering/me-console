@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { toast } from '../../stores/toastStore';
 
 interface EnvItem {
   name: string;
@@ -93,8 +94,8 @@ export default function DevEnvironment() {
         setCategories(sections);
         if (sections.length > 0) setSelectedCategory(sections[0].title);
         else alert('未能解析出有效数据，请检查文件格式');
-      } catch (err) {
-        console.error('解析失败:', err);
+      } catch {
+        toast.error('解析失败');
         alert('文件解析失败');
       }
     };

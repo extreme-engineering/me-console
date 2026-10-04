@@ -156,7 +156,7 @@ export const reflectionRoutes: FastifyPluginAsync = async (fastify) => {
   // 获取反思列表
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-    handler: async (request, reply) => {
+    handler: async (request, _reply) => {
       try {
         const userId = request.user.userId;
         const { type, limit = 20, page = 1 } = request.query as { type?: string; limit?: number; page?: number };

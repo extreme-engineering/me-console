@@ -1,9 +1,19 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { format, startOfDay } from 'date-fns';
 import { Calendar, Plus, X, Save, Sparkles, Trash2 } from 'lucide-react';
-import api from '../../lib/api';
+import type { Reflection } from '@meos/shared';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import MockBadge from '../../components/MockBadge';
+import { toast } from '../../stores/toastStore';
+
+interface ReflectionItem extends Reflection {
+  mock?: boolean;
+}
+
+interface ReflectionsResponse {
+  reflections?: ReflectionItem[];
+}
 
 interface TodayData {
   date: string;
@@ -27,8 +37,8 @@ function parseJsonArray(val: unknown): string[] {
     try {
       const parsed = JSON.parse(val);
       return Array.isArray(parsed) ? parsed : [];
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
       return [];
     }
   }
@@ -37,8 +47,6 @@ function parseJsonArray(val: unknown): string[] {
 
 export default function Daily() {
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [reflections, setReflections] = useState<{ id: string; date?: string; createdAt?: string; celebrations?: unknown; improvements?: unknown; tomorrow?: string; mood?: string; tags?: string; content?: string; mock?: boolean }[]>([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const [existingId, setExistingId] = useState<string | null>(null);
@@ -49,26 +57,20 @@ export default function Daily() {
   const [tags, setTags] = useState('');
   const [content, setContent] = useState('');
   const [deleting, setDeleting] = useState(false);
-  const [todayData, setTodayData] = useState<TodayData | null>(null);
   const prefilledDate = useRef<string | null>(null);
 
   const [celebInput, setCelebInput] = useState('');
   const [improvInput, setImprovInput] = useState('');
 
-  const loadReflections = useCallback(async () => {
-    try {
-      const res = await api.get('/reflections');
-      setReflections(res.data.reflections || res.data || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const reflectionsQuery = useApiQuery<ReflectionsResponse>(['reflections'], '/reflections');
+  const reflections = useMemo(() => reflectionsQuery.data?.reflections ?? [], [reflectionsQuery.data]);
+  const todaySummaryQuery = useApiQuery<TodayData>(['reflections', 'today-summary', selectedDate], `/reflections/today-summary?date=${selectedDate}`);
+  const todayData = todaySummaryQuery.data ?? null;
 
-  useEffect(() => {
-    loadReflections();
-  }, [loadReflections]);
+  const createReflection = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/reflections', data), [['reflections']]);
+  const updateReflection = useApiMutation(({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/reflections/${id}`, data), [['reflections']]);
+  const deleteReflection = useApiMutation((id: string) => apiRequest('delete', `/reflections/${id}`), [['reflections']]);
+  const createTodo = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/todos', data), [['todos']]);
 
   useEffect(() => {
     const target = format(startOfDay(new Date(selectedDate)), 'yyyy-MM-dd');
@@ -85,7 +87,7 @@ export default function Daily() {
       setImprovements(parseJsonArray(match.improvements));
       setTomorrow(match.tomorrow || '');
       setMood(match.mood || '');
-      setTags(match.tags || '');
+      setTags(parseJsonArray(match.tags).join(', '));
       setContent(match.content || '');
     } else {
       setExistingId(null);
@@ -98,10 +100,8 @@ export default function Daily() {
     }
   }, [selectedDate, reflections]);
 
-  // 当日数据：拉取概况，无反思草稿时自动预填到「自由记录」
+  // 当日数据：无反思草稿时自动预填到「自由记录」（汇总失败不影响反思填写）
   useEffect(() => {
-    let cancelled = false;
-    setTodayData(null);
     const target = format(startOfDay(new Date(selectedDate)), 'yyyy-MM-dd');
     const hasReflection = reflections.some((r) => {
       const rawDate = r.date || r.createdAt;
@@ -109,25 +109,11 @@ export default function Daily() {
       return format(startOfDay(new Date(rawDate)), 'yyyy-MM-dd') === target;
     });
 
-    api
-      .get(`/reflections/today-summary?date=${selectedDate}`)
-      .then((res) => {
-        if (cancelled) return;
-        const data = res.data as TodayData;
-        setTodayData(data);
-        if (!hasReflection && data.summary && prefilledDate.current !== selectedDate) {
-          prefilledDate.current = selectedDate;
-          setContent(data.summary);
-        }
-      })
-      .catch(() => {
-        // 汇总失败不影响反思填写
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedDate, reflections]);
+    if (!hasReflection && todayData?.summary && prefilledDate.current !== selectedDate) {
+      prefilledDate.current = selectedDate;
+      setContent(todayData.summary);
+    }
+  }, [selectedDate, reflections, todayData]);
 
   const handleInsertSummary = () => {
     if (!todayData?.summary) return;
@@ -164,22 +150,23 @@ export default function Daily() {
     setSaving(true);
     try {
       const payload = {
-        date: selectedDate,
-        celebrations: JSON.stringify(celebrations),
-        improvements: JSON.stringify(improvements),
+        // Supabase 为 timestamptz、API 为 ISO datetime：统一发送完整时间戳；
+        // 取本地正午避免时区偏移导致日期落到前一天/后一天
+        date: new Date(`${selectedDate}T12:00:00`).toISOString(),
+        celebrations,
+        improvements,
         tomorrow,
         mood,
-        tags,
+        tags: tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
         content,
       };
       if (existingId) {
-        await api.patch(`/reflections/${existingId}`, payload);
+        await updateReflection.mutateAsync({ id: existingId, data: payload });
       } else {
-        await api.post('/reflections', payload);
+        await createReflection.mutateAsync(payload);
       }
-      await loadReflections();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     } finally {
       setSaving(false);
     }
@@ -188,9 +175,9 @@ export default function Daily() {
   const handleGenerateTodo = async () => {
     if (!tomorrow.trim()) return;
     try {
-      await api.post('/todos', { title: tomorrow.trim(), source: 'reflection' });
-    } catch (err) {
-      console.error(err);
+      await createTodo.mutateAsync({ title: tomorrow.trim(), source: 'reflection' });
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
@@ -199,16 +186,15 @@ export default function Daily() {
     if (!window.confirm('确定删除今天的反思记录？')) return;
     setDeleting(true);
     try {
-      await api.delete(`/reflections/${existingId}`);
-      await loadReflections();
-    } catch (err) {
-      console.error(err);
+      await deleteReflection.mutateAsync(existingId);
+    } catch {
+      toast.error('操作失败，请重试');
     } finally {
       setDeleting(false);
     }
   };
 
-  if (loading) {
+  if (reflectionsQuery.isLoading) {
     return <LoadingSpinner />;
   }
 
@@ -401,8 +387,7 @@ export default function Daily() {
         {existingId && reflections.find((r) => r.id === existingId)?.mock && (
           <MockBadge
             onClick={async () => {
-              await api.patch(`/reflections/${existingId}`, { mock: false });
-              await loadReflections();
+              await updateReflection.mutateAsync({ id: existingId, data: { mock: false } });
             }}
           />
         )}

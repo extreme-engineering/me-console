@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 import Layout from './components/Layout';
+import ErrorBoundary from './components/ErrorBoundary';
 import { useAuthStore } from './stores/authStore';
 
 const Workbench = lazy(() => import('./pages/Workbench'));
@@ -14,6 +15,7 @@ const ReflectionHub = lazy(() => import('./pages/ReflectionHub'));
 const ResourcesHub = lazy(() => import('./pages/ResourcesHub'));
 const MeLogHub = lazy(() => import('./pages/MeLogHub'));
 const BrandHub = lazy(() => import('./pages/BrandHub'));
+const OpportunityHub = lazy(() => import('./pages/OpportunityHub'));
 
 function PageLoader() {
   return (
@@ -25,7 +27,8 @@ function PageLoader() {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
-  const isDevMode = import.meta.env.DEV || import.meta.env.VITE_SKIP_AUTH === 'true';
+  // 免鉴权仅在 dev 构建（VITE_SKIP_AUTH=false 可显式关闭），生产构建一律走真实登录
+  const isDevMode = import.meta.env.DEV && import.meta.env.VITE_SKIP_AUTH !== 'false';
 
   if (isDevMode) {
     return <>{children}</>;
@@ -47,46 +50,51 @@ function NotFound() {
 
 function App() {
   return (
-    <Suspense fallback={<PageLoader />}>
-      <Routes>
-        <Route path="/" element={<Landing />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-          <Route path="/workbench" element={<Workbench />} />
+    <ErrorBoundary>
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+            <Route path="/workbench" element={<ErrorBoundary><Workbench /></ErrorBoundary>} />
 
-          {/* Direction */}
-          <Route path="/direction" element={<DirectionHub />} />
-          <Route path="/direction/*" element={<Navigate to="/direction" replace />} />
+            {/* Direction */}
+            <Route path="/direction" element={<ErrorBoundary><DirectionHub /></ErrorBoundary>} />
+            <Route path="/direction/*" element={<Navigate to="/direction" replace />} />
 
-          {/* Action */}
-          <Route path="/action" element={<ActionHub />} />
-          <Route path="/action/*" element={<Navigate to="/action" replace />} />
+            {/* Action */}
+            <Route path="/action" element={<ErrorBoundary><ActionHub /></ErrorBoundary>} />
+            <Route path="/action/*" element={<Navigate to="/action" replace />} />
 
-          {/* Cognition */}
-          <Route path="/cognition" element={<CognitionHub />} />
-          <Route path="/cognition/*" element={<Navigate to="/cognition" replace />} />
+            {/* Cognition */}
+            <Route path="/cognition" element={<ErrorBoundary><CognitionHub /></ErrorBoundary>} />
+            <Route path="/cognition/*" element={<Navigate to="/cognition" replace />} />
 
-          {/* Reflection */}
-          <Route path="/reflection" element={<ReflectionHub />} />
-          <Route path="/reflection/*" element={<Navigate to="/reflection" replace />} />
+            {/* Reflection */}
+            <Route path="/reflection" element={<ErrorBoundary><ReflectionHub /></ErrorBoundary>} />
+            <Route path="/reflection/*" element={<Navigate to="/reflection" replace />} />
 
-          {/* Resources */}
-          <Route path="/resources" element={<ResourcesHub />} />
-          <Route path="/resources/*" element={<Navigate to="/resources" replace />} />
+            {/* Resources */}
+            <Route path="/resources" element={<ErrorBoundary><ResourcesHub /></ErrorBoundary>} />
+            <Route path="/resources/*" element={<Navigate to="/resources" replace />} />
 
-          {/* MeLog */}
-          <Route path="/melog" element={<MeLogHub />} />
-          <Route path="/melog/*" element={<Navigate to="/melog" replace />} />
+            {/* MeLog */}
+            <Route path="/melog" element={<ErrorBoundary><MeLogHub /></ErrorBoundary>} />
+            <Route path="/melog/*" element={<Navigate to="/melog" replace />} />
 
-          {/* Brand */}
-          <Route path="/brand" element={<BrandHub />} />
-          <Route path="/brand/*" element={<Navigate to="/brand" replace />} />
+            {/* Brand */}
+            <Route path="/brand" element={<ErrorBoundary><BrandHub /></ErrorBoundary>} />
+            <Route path="/brand/*" element={<Navigate to="/brand" replace />} />
 
-          <Route path="*" element={<NotFound />} />
-        </Route>
-      </Routes>
-    </Suspense>
+            <Route path="/opportunity" element={<ErrorBoundary><OpportunityHub /></ErrorBoundary>} />
+            <Route path="/opportunity/*" element={<Navigate to="/opportunity" replace />} />
+
+            <Route path="*" element={<NotFound />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 

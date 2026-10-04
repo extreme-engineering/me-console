@@ -42,7 +42,7 @@ const createNoteSchema = z.object({
 export const topicRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-    handler: async (request, reply) => {
+    handler: async (request, _reply) => {
       try {
         const userId = request.user.userId;
 

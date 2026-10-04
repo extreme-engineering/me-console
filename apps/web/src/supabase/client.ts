@@ -11,7 +11,7 @@ export function getSupabaseUrl(): string {
 }
 
 export const supabaseUrl = getSupabaseUrl();
-export const supabaseAnonKey = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzg0NzM3MzYxLCJleHAiOjEzMjk1Mzc3MzYxfQ.65T2nQ5yEkZNKxCz8PKuOPouy8Gmoib2_efhy6GV4X8';
+export const supabaseAnonKey = import.meta.env.DEV ? (import.meta.env.MEOO_LOCAL_ANON_KEY || '') : 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzg0NzM3MzYxLCJleHAiOjEzMjk1Mzc3MzYxfQ.65T2nQ5yEkZNKxCz8PKuOPouy8Gmoib2_efhy6GV4X8';
 
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {

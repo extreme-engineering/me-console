@@ -1,12 +1,10 @@
 // MeOS Chrome Extension Background Service Worker
 
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('MeOS Extension installed');
-});
+const APP_URL = 'https://i76snwerw0t7.meoo.fun';
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'GET_EXTENSION_ID') {
-    sendResponse({ extensionId: chrome.runtime.id });
+// 首次安装引导：直接打开 MeOS
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install') {
+    chrome.tabs.create({ url: APP_URL });
   }
-  return true;
 });

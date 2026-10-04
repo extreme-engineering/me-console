@@ -1,29 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Plus, Check, Circle, Clock, Flag, Trash2, Edit2 } from 'lucide-react';
-import api from '../../lib/api';
+import type { Domain, Goal, Todo } from '@meos/shared';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import Modal from '../../components/Modal';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import MockBadge from '../../components/MockBadge';
 import { isMockItem } from '../../lib/mockFlag';
+import { toast } from '../../stores/toastStore';
 
-interface Todo {
-  id: string;
-  title: string;
-  description?: string;
-  priority: 'urgent' | 'high' | 'medium' | 'low';
-  status: 'inbox' | 'todo' | 'doing' | 'done';
-  dueDate?: string;
-  goalId?: string;
-  domainId?: string;
-  completedAt?: string;
-  mock?: boolean;
-  createdAt: string;
-}
-
-interface Goal { id: string; title: string; }
-interface Domain { id: string; name: string; }
+interface TodosResponse { todos: Todo[] }
+interface GoalsResponse { goals: Goal[] }
+interface DomainsResponse { domains: Domain[] }
 
 type StatusTab = 'inbox' | 'todo' | 'doing' | 'done';
 
@@ -60,10 +49,10 @@ const emptyForm: TodoFormData = {
 };
 
 export default function Todos() {
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [domains, setDomains] = useState<Domain[]>([]);
-  const [loading, setLoading] = useState(true);
+  const todosQuery = useApiQuery<TodosResponse>(['todos'], '/todos');
+  const goalsQuery = useApiQuery<GoalsResponse>(['goals'], '/goals');
+  const domainsQuery = useApiQuery<DomainsResponse>(['domains'], '/domains');
+
   const [activeTab, setActiveTab] = useState<StatusTab>('inbox');
   const [showModal, setShowModal] = useState(false);
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
@@ -72,29 +61,16 @@ export default function Todos() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
-    try {
-      const [todosRes, goalsRes, domainsRes] = await Promise.all([
-        api.get('/todos'),
-        api.get('/goals'),
-        api.get('/domains'),
-      ]);
-      setTodos(todosRes.data?.todos ?? []);
-      setGoals(goalsRes.data?.goals ?? []);
-      setDomains(domainsRes.data?.domains ?? []);
-    } catch (err) {
-      console.error(err);
-      setTodos([]);
-      setGoals([]);
-      setDomains([]);
-    }
+  const todos = todosQuery.data?.todos ?? [];
+  const goals = goalsQuery.data?.goals ?? [];
+  const domains = domainsQuery.data?.domains ?? [];
 
-    finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { loadData(); }, [loadData]);
+  const createTodo = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/todos', data), [['todos'], ['goals']]);
+  const updateTodo = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/todos/${id}`, data),
+    [['todos'], ['goals']]
+  );
+  const deleteTodo = useApiMutation((id: string) => apiRequest('delete', `/todos/${id}`), [['todos'], ['goals']]);
 
   const countByStatus = (status: StatusTab) => todos.filter((t) => t.status === status).length;
   const filteredTodos = todos.filter((t) => t.status === activeTab);
@@ -132,16 +108,15 @@ export default function Todos() {
         status: editingTodo ? editingTodo.status : 'inbox',
       };
       if (editingTodo) {
-        await api.patch(`/todos/${editingTodo.id}`, payload);
+        await updateTodo.mutateAsync({ id: editingTodo.id, data: payload });
       } else {
-        await api.post('/todos', payload);
+        await createTodo.mutateAsync(payload);
       }
       setShowModal(false);
       setForm(emptyForm);
       setEditingTodo(null);
-      await loadData();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     } finally {
       setSubmitting(false);
     }
@@ -153,8 +128,7 @@ export default function Todos() {
       ? { status: 'todo' }
       : { status: 'done', completedAt: new Date().toISOString() };
     try {
-      await api.patch(`/todos/${todo.id}`, payload);
-      await loadData();
+      await updateTodo.mutateAsync({ id: todo.id, data: payload });
     } catch {}
   };
 
@@ -166,25 +140,24 @@ export default function Todos() {
     if (!confirmDelete) return;
     setDeleting(confirmDelete);
     try {
-      await api.delete(`/todos/${confirmDelete}`);
-      await loadData();
+      await deleteTodo.mutateAsync(confirmDelete);
     } finally {
       setDeleting(null);
       setConfirmDelete(null);
     }
   };
 
-  const isOverdue = (dateStr?: string) => {
+  const isOverdue = (dateStr?: string | null) => {
     if (!dateStr) return false;
     return new Date(dateStr) < new Date();
   };
 
-  const goalName = (goalId?: string) => {
+  const goalName = (goalId?: string | null) => {
     if (!goalId) return null;
     return goals.find((g) => g.id === goalId)?.title;
   };
 
-  if (loading) {
+  if (todosQuery.isLoading || goalsQuery.isLoading || domainsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner />
@@ -289,8 +262,7 @@ export default function Todos() {
                   {isMockItem(todo) && (
                     <MockBadge
                       onClick={async () => {
-                        await api.patch(`/todos/${todo.id}`, { mock: false });
-                        loadData();
+                        await updateTodo.mutateAsync({ id: todo.id, data: { mock: false } });
                       }}
                     />
                   )}

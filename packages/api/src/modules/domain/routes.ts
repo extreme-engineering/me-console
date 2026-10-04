@@ -36,7 +36,7 @@ export const domainRoutes: FastifyPluginAsync = async (fastify) => {
   // 获取用户所有领域
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-    handler: async (request, reply) => {
+    handler: async (request, _reply) => {
       try {
         const userId = request.user.userId;
         if (isDev && (!userId || userId === 'mock-user-1')) {

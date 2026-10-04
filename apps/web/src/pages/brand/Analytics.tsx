@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import api from '../../lib/api';
+import { useState } from 'react';
+import { useApiQuery } from '../../lib/api-queries';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
 import BarChart from '../../components/charts/BarChart';
@@ -18,30 +18,17 @@ const METRICS: { key: MetricKey; label: string; color: string }[] = [
 const fmt = (n: number) => (n === 0 ? '—' : n.toLocaleString());
 
 export default function Analytics() {
-  const [data, setData] = useState<BrandOverview | null>(null);
-  const [loading, setLoading] = useState(true);
+  const overviewQuery = useApiQuery<BrandOverview>(['brand/overview'], '/brand/overview');
   const [metric, setMetric] = useState<MetricKey>('views');
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await api.get('/brand/overview');
-        setData(res.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  if (loading) {
+  if (overviewQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner />
       </div>
     );
   }
+  const data = overviewQuery.data;
   if (!data) return <EmptyState title="加载失败" description="无法获取总览数据，请确认后端已启动" />;
 
   const active = METRICS.find((m) => m.key === metric)!;

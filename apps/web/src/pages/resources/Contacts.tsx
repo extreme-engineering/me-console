@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
-import api from '../../lib/api';
+import { useEffect, useState } from 'react';
+import type { Contact as SharedContact, Domain } from '@meos/shared';
 import { Plus, User, Phone, Trash2, Edit2 } from 'lucide-react';
 import { format } from 'date-fns';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -7,29 +7,28 @@ import EmptyState from '../../components/EmptyState';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import MockBadge from '../../components/MockBadge';
 import { isMockItem } from '../../lib/mockFlag';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 
 type Relation = 'friend' | 'colleague' | 'mentor' | 'family' | 'other';
 type ContactFreq = 'weekly' | 'monthly' | 'quarterly';
 
-interface Contact {
-  id: string;
-  name: string;
-  title?: string;
-  company?: string;
+interface ContactRow extends Omit<SharedContact, 'tags' | 'relation' | 'contactFreq'> {
   relation: Relation;
   tags?: string[];
-  notes?: string;
   contactFreq?: ContactFreq;
-  lastContact?: string;
-  domainId?: string;
   mock?: boolean;
-  createdAt: string;
   domain?: { id: string; name: string };
 }
 
-interface Domain {
-  id: string;
+interface ContactSavePayload {
   name: string;
+  title: string;
+  company: string;
+  relation: string;
+  tags: string[];
+  notes: string;
+  contactFreq: string;
+  domainId: string;
 }
 
 const RELATION_LABELS: Record<Relation, string> = {
@@ -68,7 +67,7 @@ const FREQ_DAYS: Record<ContactFreq, number> = {
 
 const RELATIONS: Relation[] = ['friend', 'colleague', 'mentor', 'family', 'other'];
 
-function needsContact(contact: Contact): boolean {
+function needsContact(contact: ContactRow): boolean {
   if (!contact.contactFreq) return false;
   if (!contact.lastContact) return true;
   const lastDate = new Date(contact.lastContact);
@@ -82,18 +81,9 @@ function ContactModal({
   onSave,
   onClose,
 }: {
-  contact?: Contact | null;
+  contact?: ContactRow | null;
   domains: Domain[];
-  onSave: (data: {
-    name: string;
-    title: string;
-    company: string;
-    relation: string;
-    tags: string[];
-    notes: string;
-    contactFreq: string;
-    domainId: string;
-  }) => void;
+  onSave: (data: ContactSavePayload) => void;
   onClose: () => void;
 }) {
   const [form, setForm] = useState({
@@ -243,57 +233,53 @@ function ContactModal({
 }
 
 export default function Contacts() {
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [domains, setDomains] = useState<Domain[]>([]);
-  const [loading, setLoading] = useState(true);
   const [activeRelation, setActiveRelation] = useState<Relation | 'all'>('all');
   const [showNeedsContact, setShowNeedsContact] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [editingContact, setEditingContact] = useState<Contact | null>(null);
+  const [editingContact, setEditingContact] = useState<ContactRow | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const loadData = useCallback(async () => {
-    try {
-      const [contactsRes, domainsRes] = await Promise.all([
-        api.get('/contacts'),
-        api.get('/domains'),
-      ]);
-      setContacts(contactsRes.data.contacts || contactsRes.data?.data || contactsRes.data || []);
-      setDomains(domainsRes.data.domains || domainsRes.data?.data || domainsRes.data || []);
-    } catch (err) {
-      console.error(err);
-      setContacts([]);
-    }
+  const contactsQuery = useApiQuery<{ contacts: ContactRow[] }>(['contacts'], '/contacts');
+  const domainsQuery = useApiQuery<{ domains: Domain[] }>(['domains'], '/domains');
 
-    finally {
-      setLoading(false);
-    }
-  }, []);
+  const contacts = contactsQuery.data?.contacts ?? [];
+  const domains = domainsQuery.data?.domains ?? [];
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const createContact = useApiMutation(
+    (data: ContactSavePayload) => apiRequest('post', '/contacts', data),
+    [['contacts']]
+  );
 
-  const handleSave = async (data: {
-    name: string;
-    title: string;
-    company: string;
-    relation: string;
-    tags: string[];
-    notes: string;
-    contactFreq: string;
-    domainId: string;
-  }) => {
+  const updateContact = useApiMutation(
+    ({ id, data }: { id: string; data: ContactSavePayload }) => apiRequest('patch', `/contacts/${id}`, data),
+    [['contacts']]
+  );
+
+  const deleteContact = useApiMutation(
+    (id: string) => apiRequest('delete', `/contacts/${id}`),
+    [['contacts']]
+  );
+
+  const touchContact = useApiMutation(
+    (id: string) => apiRequest('post', `/contacts/${id}/touch`),
+    [['contacts']]
+  );
+
+  const clearContactMock = useApiMutation(
+    ({ id }: { id: string }) => apiRequest('patch', `/contacts/${id}`, { mock: false }),
+    [['contacts']]
+  );
+
+  const handleSave = async (data: ContactSavePayload) => {
     try {
       if (editingContact) {
-        await api.patch(`/contacts/${editingContact.id}`, data);
+        await updateContact.mutateAsync({ id: editingContact.id, data });
       } else {
-        await api.post('/contacts', data);
+        await createContact.mutateAsync(data);
       }
       setShowModal(false);
       setEditingContact(null);
-      loadData();
     } catch {}
   };
 
@@ -305,16 +291,14 @@ export default function Contacts() {
     if (!confirmDelete) return;
     setDeleting(true);
     try {
-      await api.delete(`/contacts/${confirmDelete}`);
+      await deleteContact.mutateAsync(confirmDelete);
       setConfirmDelete(null);
-      loadData();
     } catch {} finally { setDeleting(false); }
   };
 
   const handleTouch = async (id: string) => {
     try {
-      await api.post(`/contacts/${id}/touch`);
-      loadData();
+      await touchContact.mutateAsync(id);
     } catch {}
   };
 
@@ -326,7 +310,7 @@ export default function Contacts() {
 
   const needsCount = contacts.filter(needsContact).length;
 
-  if (loading) {
+  if (contactsQuery.isLoading || domainsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner />
@@ -430,8 +414,7 @@ export default function Contacts() {
                     {isMockItem(contact) && (
                       <MockBadge
                         onClick={async () => {
-                          await api.patch(`/contacts/${contact.id}`, { mock: false });
-                          loadData();
+                          await clearContactMock.mutateAsync({ id: contact.id });
                         }}
                       />
                     )}

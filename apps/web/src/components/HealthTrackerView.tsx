@@ -1,5 +1,6 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
-import api from '../lib/api';
+import { useMemo, useState } from 'react';
+import type { HealthRecord } from '@meos/shared';
+import { keepPreviousData } from '@tanstack/react-query';
 import { Plus, Activity, Trash2, Edit2 } from 'lucide-react';
 import { format, subDays } from 'date-fns';
 import Modal from './Modal';
@@ -7,19 +8,14 @@ import LoadingSpinner from './LoadingSpinner';
 import LineChart from './charts/LineChart';
 import MockBadge from './MockBadge';
 import { isMockItem } from '../lib/mockFlag';
+import { apiRequest, useApiMutation, useApiQuery } from '../lib/api-queries';
+import { toast } from '../stores/toastStore';
 
 type HealthType = 'sleep' | 'exercise' | 'weight' | 'mood' | 'energy' | 'water';
 
-interface HealthRecord {
-  id: string;
-  type: HealthType;
-  value: number;
-  unit: string;
-  note?: string;
-  date: string;
-  recordedAt?: string;
+interface HealthRecordRow extends HealthRecord {
+  date?: string;
   mock?: boolean;
-  createdAt: string;
 }
 
 interface HealthSummaryEntry {
@@ -60,49 +56,50 @@ const TYPE_COLORS: Record<HealthType, string> = {
 const TYPES: HealthType[] = ['sleep', 'exercise', 'weight', 'mood', 'energy', 'water'];
 
 export default function HealthTrackerView() {
-  const [records, setRecords] = useState<HealthRecord[]>([]);
-  const [summary, setSummary] = useState<HealthSummary | null>(null);
-  const [loading, setLoading] = useState(true);
   const [activeType, setActiveType] = useState<HealthType>('sleep');
   const [addValue, setAddValue] = useState('');
   const [addNote, setAddNote] = useState('');
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editingRecord, setEditingRecord] = useState<HealthRecord | null>(null);
+  const [editingRecord, setEditingRecord] = useState<HealthRecordRow | null>(null);
   const [editValue, setEditValue] = useState('');
   const [editNote, setEditNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const to = format(new Date(), 'yyyy-MM-dd');
-      const from = format(subDays(new Date(), 14), 'yyyy-MM-dd');
-      const [recordsRes, summaryRes] = await Promise.all([
-        api.get(`/health?type=${activeType}&from=${from}&to=${to}`),
-        api.get(`/health/summary?days=7`),
-      ]);
-      setRecords(recordsRes.data.records || recordsRes.data?.data || recordsRes.data || []);
-      const summaryData = summaryRes.data.summary || summaryRes.data || {};
-      setSummary(typeof summaryData === 'object' && !Array.isArray(summaryData) ? summaryData as HealthSummary : null);
-    } catch (err) {
-      console.error(err);
-      setRecords([]);
-    }
+  const to = format(new Date(), 'yyyy-MM-dd');
+  const from = format(subDays(new Date(), 14), 'yyyy-MM-dd');
 
-    finally {
-      setLoading(false);
-    }
-  }, [activeType]);
+  const recordsQuery = useApiQuery<{ records: HealthRecordRow[] }>(
+    ['health', activeType],
+    `/health?type=${activeType}&from=${from}&to=${to}`,
+    { placeholderData: keepPreviousData }
+  );
+  const summaryQuery = useApiQuery<{ summary: HealthSummary }>(['health/summary'], '/health/summary?days=7');
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const records = useMemo(() => recordsQuery.data?.records ?? [], [recordsQuery.data]);
+  const summary = summaryQuery.data?.summary ?? null;
+
+  const addHealthRecord = useApiMutation(
+    (data: { type: string; value: number; unit: string; note?: string }) =>
+      apiRequest('post', '/health', data),
+    [['health'], ['health/summary']]
+  );
+
+  const updateHealthRecord = useApiMutation(
+    ({ id, data }: { id: string; data: { value?: number; note?: string; mock?: boolean } }) =>
+      apiRequest('patch', `/health/${id}`, data),
+    [['health'], ['health/summary']]
+  );
+
+  const deleteHealthRecord = useApiMutation(
+    (id: string) => apiRequest('delete', `/health/${id}`),
+    [['health'], ['health/summary']]
+  );
 
   const handleAdd = async () => {
     const value = parseFloat(addValue);
     if (isNaN(value)) return;
     try {
-      await api.post('/health', {
+      await addHealthRecord.mutateAsync({
         type: activeType,
         value,
         unit: TYPE_UNITS[activeType],
@@ -110,19 +107,17 @@ export default function HealthTrackerView() {
       });
       setAddValue('');
       setAddNote('');
-      loadData();
     } catch {}
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('确定要删除这条记录吗？')) return;
     try {
-      await api.delete(`/health/${id}`);
-      loadData();
+      await deleteHealthRecord.mutateAsync(id);
     } catch {}
   };
 
-  const openEdit = (record: HealthRecord) => {
+  const openEdit = (record: HealthRecordRow) => {
     setEditingRecord(record);
     setEditValue(String(record.value));
     setEditNote(record.note ?? '');
@@ -135,18 +130,15 @@ export default function HealthTrackerView() {
     if (isNaN(value)) return;
     setSubmitting(true);
     try {
-      await api.patch(`/health/${editingRecord.id}`, {
-        value,
-        note: editNote || undefined,
+      await updateHealthRecord.mutateAsync({
+        id: editingRecord.id,
+        data: { value, note: editNote || undefined },
       });
       setShowEditModal(false);
       setEditingRecord(null);
-      loadData();
-    } catch (err) {
-      console.error(err);
-    }
-
-    finally {
+    } catch {
+      toast.error('操作失败，请重试');
+    } finally {
       setSubmitting(false);
     }
   };
@@ -154,7 +146,7 @@ export default function HealthTrackerView() {
   const chartData = useMemo(() => {
     const map = new Map<string, number>();
     records.forEach((r) => {
-      const day = format(new Date(r.recordedAt || r.date), 'MM-dd');
+      const day = format(new Date(r.recordedAt || r.date || ''), 'MM-dd');
       map.set(day, r.value);
     });
     const result: { date: string; value: number }[] = [];
@@ -165,7 +157,7 @@ export default function HealthTrackerView() {
     return result;
   }, [records]);
 
-  if (loading && records.length === 0) {
+  if (recordsQuery.isLoading) {
     return (
       <div className="max-w-5xl mx-auto py-12 flex justify-center">
         <LoadingSpinner />
@@ -283,12 +275,11 @@ export default function HealthTrackerView() {
               {isMockItem(record) && (
                 <MockBadge
                   onClick={async () => {
-                    await api.patch(`/health/${record.id}`, { mock: false });
-                    await loadData();
+                    await updateHealthRecord.mutateAsync({ id: record.id, data: { mock: false } });
                   }}
                 />
               )}
-              <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{format(new Date(record.recordedAt || record.date), 'yyyy-MM-dd')}</span>
+              <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{format(new Date(record.recordedAt || record.date || ''), 'yyyy-MM-dd')}</span>
               <button
                 onClick={() => openEdit(record)}
                 className="p-1.5 rounded-lg transition-all opacity-0 group-hover:opacity-100"

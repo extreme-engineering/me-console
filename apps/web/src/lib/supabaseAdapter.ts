@@ -17,6 +17,7 @@
 import { supabase } from '../supabase/client';
 
 // 动态表名绕开 supabase-js 的字面量 union 类型检查；auth 路径仍走 supabase 自身。
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sb = () => supabase as any;
 
 // ==================== 实体映射 ====================
@@ -46,6 +47,7 @@ const ENTITIES: Record<string, EntityMeta> = {
   reading: { table: 'reading_items', list: 'items', one: 'item' },
   health: { table: 'health_records', list: 'records', one: 'record' },
   workflows: { table: 'workflows', list: 'workflows', one: 'workflow' },
+  opportunities: { table: 'opportunities', list: 'opportunities', one: 'opportunity' },
 };
 
 // list / 单条查询需要嵌入的关系（别名 = 前端字段名）
@@ -72,6 +74,7 @@ const ORDER: Record<string, { column: string; ascending: boolean }[]> = {
   contacts: [{ column: 'name', ascending: true }],
   workflows: [{ column: 'createdAt', ascending: false }],
   subscriptions: [{ column: 'createdAt', ascending: false }],
+  opportunities: [{ column: 'order', ascending: true }, { column: 'createdAt', ascending: false }],
 };
 
 // 支持 isMock 列的实体（其余品牌的 isMock 列不在本适配器范围内）
@@ -93,6 +96,12 @@ function cleanPayload(entity: string, data?: unknown): Record<string, unknown> {
     }
     if (v === undefined || WRITE_STRIP_KEYS.has(k)) continue;
     out[k] = v;
+  }
+  // reflections 的数组字段在 Supabase 中是 TEXT 列，写入前需 JSON 序列化
+  if (entity === 'reflections') {
+    for (const k of ['celebrations', 'improvements', 'tags']) {
+      if (Array.isArray(out[k])) out[k] = JSON.stringify(out[k]);
+    }
   }
   return out;
 }

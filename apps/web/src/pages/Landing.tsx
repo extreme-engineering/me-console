@@ -12,6 +12,7 @@ export default function Landing() {
   const [bootstrapState, setBootstrapState] = useState<'pending' | 'done' | 'failed'>('pending');
   const isDevMode = import.meta.env.DEV || import.meta.env.VITE_SKIP_AUTH === 'true';
 
+  // 仅挂载时执行一次：demo 账号引导，重复执行会重置已完成的登录态
   useEffect(() => {
     if (!useLocalMode || isDevMode) {
       setBootstrapState('done');
@@ -37,6 +38,7 @@ export default function Landing() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!useLocalMode && !isAuthenticated && !isDevMode) {

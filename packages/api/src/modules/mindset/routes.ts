@@ -20,7 +20,7 @@ export const mindsetRoutes: FastifyPluginAsync = async (fastify) => {
   // 获取用户所有心态格言
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-  }, async (request, reply) => {
+  }, async (request, _reply) => {
     try {
       const userId = request.user.userId;
       const slogans = await prisma.mindsetSlogan.findMany({

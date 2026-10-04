@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Activity, Plug, Sparkles, FileBadge } from 'lucide-react';
 import MethodologyCard from '../components/MethodologyCard';
+import HubTabs from '../components/HubTabs';
 import Timeline from './melog/Timeline';
 import Sources from './melog/Sources';
 import Skills from './melog/Skills';
@@ -9,7 +10,7 @@ import Standard from './melog/Standard';
 
 type TabKey = 'timeline' | 'sources' | 'skills' | 'standard';
 
-const TABS: { key: TabKey; label: string; icon: typeof Activity }[] = [
+const TABS = [
   { key: 'timeline', label: '时间线', icon: Activity },
   { key: 'sources', label: '数据源', icon: Plug },
   { key: 'skills', label: '技能', icon: Sparkles },
@@ -21,8 +22,8 @@ export default function MeLogHub() {
   const initialTab = (searchParams.get('tab') as TabKey) || 'timeline';
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
 
-  const handleTabChange = (tab: TabKey) => {
-    setActiveTab(tab);
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab as TabKey);
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.set('tab', tab);
@@ -39,38 +40,17 @@ export default function MeLogHub() {
             fontFamily: 'var(--font-display)',
             fontWeight: 500,
             letterSpacing: '-0.02em',
-            color: 'var(--color-text-primary)',
+            color: 'var(--color-ink)',
           }}
         >
           MeLog
         </h1>
-        <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+        <p className="text-sm" style={{ color: 'var(--color-ink-3)' }}>
           把健康、笔记、聊天记录汇入一条本地时间线，用技能生成洞察
         </p>
       </div>
 
-      <div className="flex gap-1 mb-6 p-1 rounded-xl w-fit" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
-        {TABS.map((tab) => {
-          const Icon = tab.icon;
-          return (
-            <button
-              key={tab.key}
-              onClick={() => handleTabChange(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-all ${
-                activeTab === tab.key ? 'font-medium' : ''
-              }`}
-              style={{
-                backgroundColor: activeTab === tab.key ? 'var(--color-surface)' : 'transparent',
-                color: activeTab === tab.key ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-                boxShadow: activeTab === tab.key ? 'var(--shadow-sm)' : 'none',
-              }}
-            >
-              <Icon size={15} />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <HubTabs tabs={TABS} activeTab={activeTab} onTabChange={handleTabChange} />
 
       <MethodologyCard page={`melog:${activeTab}`} />
 

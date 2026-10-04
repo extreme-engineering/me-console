@@ -1,22 +1,24 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useState } from 'react';
+import type { InsightNote as SharedInsightNote } from '@meos/shared';
+import { keepPreviousData } from '@tanstack/react-query';
 import { Plus, Search, Edit2, Trash2, Lightbulb, Tag, Clock } from 'lucide-react';
-import api from '../../lib/api';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import Modal from '../../components/Modal';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Pagination from '../../components/Pagination';
 import ConfirmDialog from '../../components/ConfirmDialog';
 import MockBadge from '../../components/MockBadge';
 import { isMockItem } from '../../lib/mockFlag';
+import { toast } from '../../stores/toastStore';
 
-interface InsightNote {
-  id: string;
-  title: string;
-  content: string;
-  tags: string | null;
-  category: string | null;
+interface InsightsResponse {
+  insights: InsightNote[];
+  pagination?: { page: number; limit: number; total: number; totalPages: number };
+}
+
+// 页面依赖 mock 标记（isMockItem），shared 的 InsightNote 未包含该字段，故本地扩展
+interface InsightNote extends SharedInsightNote {
   mock?: boolean;
-  createdAt: string;
-  updatedAt: string;
 }
 
 interface InsightFormData {
@@ -43,8 +45,6 @@ const CATEGORIES = [
 ];
 
 export default function Insights() {
-  const [insights, setInsights] = useState<InsightNote[]>([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [showModal, setShowModal] = useState(false);
@@ -53,45 +53,49 @@ export default function Insights() {
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [pagination, setPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 0 });
+  const [page, setPage] = useState(1);
+  const limit = 20;
 
-  const loadData = useCallback(async () => {
-    try {
-      const params = new URLSearchParams();
-      if (search) params.append('search', search);
-      if (category) params.append('category', category);
-      params.append('page', String(pagination.page));
-      params.append('limit', String(pagination.limit));
+  const insightsQuery = useApiQuery<InsightsResponse>(
+    ['insights', { search, category, page, limit }],
+    `/insights?${new URLSearchParams({
+      ...(search ? { search } : {}),
+      ...(category ? { category } : {}),
+      page: String(page),
+      limit: String(limit),
+    }).toString()}`,
+    { placeholderData: keepPreviousData }
+  );
+  const insights = insightsQuery.data?.insights ?? [];
 
-      const res = await api.get(`/insights?${params.toString()}`);
-      setInsights(res.data?.insights ?? []);
-      if (res.data?.pagination) {
-        setPagination(res.data.pagination);
-      }
-    } catch (err) {
-      console.error(err);
-      setInsights([]);
-    }
-
-    finally {
-      setLoading(false);
-    }
-  }, [search, category, pagination.page, pagination.limit]);
+  const createInsight = useApiMutation(
+    (data: Record<string, unknown>) => apiRequest('post', '/insights', data),
+    [['insights']]
+  );
+  const updateInsight = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      apiRequest('patch', `/insights/${id}`, data),
+    [['insights']]
+  );
+  const deleteInsight = useApiMutation(
+    (id: string) => apiRequest('delete', `/insights/${id}`),
+    [['insights']]
+  );
+  const clearInsightMock = useApiMutation(
+    ({ id }: { id: string }) => apiRequest('patch', `/insights/${id}`, { mock: false }),
+    [['insights']]
+  );
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  useEffect(() => {
-    setPagination((p) => ({ ...p, page: 1 }));
+    setPage(1);
   }, [search, category]);
 
   const parseTags = (tagsStr: string | null): string[] => {
     if (!tagsStr) return [];
     try {
       return JSON.parse(tagsStr);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
       return [];
     }
   };
@@ -133,14 +137,13 @@ export default function Insights() {
         tags: form.tags ? form.tags.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
       };
       if (editingInsight) {
-        await api.patch(`/insights/${editingInsight.id}`, payload);
+        await updateInsight.mutateAsync({ id: editingInsight.id, data: payload });
       } else {
-        await api.post('/insights', payload);
+        await createInsight.mutateAsync(payload);
       }
       setShowModal(false);
       setForm(emptyForm);
       setEditingInsight(null);
-      await loadData();
     } finally {
       setSubmitting(false);
     }
@@ -154,15 +157,14 @@ export default function Insights() {
     if (!confirmDelete) return;
     setDeleting(confirmDelete);
     try {
-      await api.delete(`/insights/${confirmDelete}`);
+      await deleteInsight.mutateAsync(confirmDelete);
       setConfirmDelete(null);
-      await loadData();
     } finally {
       setDeleting(null);
     }
   };
 
-  if (loading) {
+  if (insightsQuery.isLoading) {
     return (
       <div className="max-w-5xl mx-auto flex items-center justify-center py-32">
         <LoadingSpinner />
@@ -242,7 +244,7 @@ export default function Insights() {
                   <h3 className="text-sm font-medium flex items-center gap-1.5" style={{ color: 'var(--color-text-primary)' }}>
                     {insight.title}
                     {isMockItem(insight) && (
-                      <MockBadge onClick={async () => { await api.patch(`/insights/${insight.id}`, { mock: false }); loadData(); }} />
+                      <MockBadge onClick={async () => { await clearInsightMock.mutateAsync({ id: insight.id }); }} />
                     )}
                   </h3>
                   <p className="text-sm mt-1 line-clamp-2" style={{ color: 'var(--color-text-secondary)' }}>{insight.content}</p>
@@ -288,9 +290,9 @@ export default function Insights() {
       </div>
 
       <Pagination
-        currentPage={pagination.page}
-        totalPages={pagination.totalPages}
-        onPageChange={(page) => setPagination((p) => ({ ...p, page }))}
+        currentPage={page}
+        totalPages={insightsQuery.data?.pagination?.totalPages ?? 0}
+        onPageChange={(p) => setPage(p)}
       />
 
       <ConfirmDialog

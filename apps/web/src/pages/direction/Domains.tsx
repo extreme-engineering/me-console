@@ -1,19 +1,14 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import { Plus, Edit2, Trash2, Check } from 'lucide-react';
-import api from '../../lib/api';
+import type { Domain } from '@meos/shared';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import Modal from '../../components/Modal';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import BalanceWheelView from '../../components/BalanceWheelView';
 import DomainIcon, { DOMAIN_ICON_PRESETS } from '../../components/DomainIcon';
 
-interface Domain {
-  id: string;
-  name: string;
-  identifier: string;
-  icon: string;
-  weight: number;
-  description?: string;
-  order?: number;
+interface DomainsResponse {
+  domains?: Domain[];
 }
 
 interface DomainFormData {
@@ -33,8 +28,8 @@ const emptyForm: DomainFormData = {
 };
 
 export default function Domains() {
-  const [domains, setDomains] = useState<Domain[]>([]);
-  const [loading, setLoading] = useState(true);
+  const domainsQuery = useApiQuery<DomainsResponse>(['domains'], '/domains');
+  const domains = domainsQuery.data?.domains ?? [];
   const [showModal, setShowModal] = useState(false);
   const [editingDomain, setEditingDomain] = useState<Domain | null>(null);
   const [form, setForm] = useState<DomainFormData>(emptyForm);
@@ -42,23 +37,9 @@ export default function Domains() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'manage' | 'balance'>('manage');
 
-  const loadDomains = useCallback(async () => {
-    try {
-      const response = await api.get('/domains');
-      setDomains(response.data.domains ?? []);
-    } catch (err) {
-      console.error(err);
-      setDomains([]);
-    }
-
-    finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadDomains();
-  }, [loadDomains]);
+  const createDomain = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/domains', data), [['domains'], ['goals']]);
+  const updateDomain = useApiMutation(({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/domains/${id}`, data), [['domains'], ['goals']]);
+  const deleteDomain = useApiMutation((id: string) => apiRequest('delete', `/domains/${id}`), [['domains'], ['goals']]);
 
   const openCreate = () => {
     setEditingDomain(null);
@@ -90,14 +71,13 @@ export default function Domains() {
         description: form.description.trim() || undefined,
       };
       if (editingDomain) {
-        await api.patch(`/domains/${editingDomain.id}`, payload);
+        await updateDomain.mutateAsync({ id: editingDomain.id, data: payload });
       } else {
-        await api.post('/domains', payload);
+        await createDomain.mutateAsync(payload);
       }
       setShowModal(false);
       setForm(emptyForm);
       setEditingDomain(null);
-      await loadDomains();
     } finally {
       setSubmitting(false);
     }
@@ -107,14 +87,13 @@ export default function Domains() {
     if (!window.confirm('确定删除这个领域？关联的目标和习惯不会被删除，但会解除关联。')) return;
     setDeleting(id);
     try {
-      await api.delete(`/domains/${id}`);
-      await loadDomains();
+      await deleteDomain.mutateAsync(id);
     } finally {
       setDeleting(null);
     }
   };
 
-  if (loading) {
+  if (domainsQuery.isLoading) {
     return (
       <div className="max-w-5xl mx-auto flex items-center justify-center py-32">
         <LoadingSpinner />
@@ -180,7 +159,7 @@ export default function Domains() {
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-3">
                 <DomainIcon
-                  icon={domain.icon}
+                  icon={domain.icon ?? ''}
                   domainName={domain.name}
                   size={48}
                   variant="circle"

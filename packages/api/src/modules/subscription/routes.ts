@@ -71,7 +71,7 @@ export const subscriptionRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.get('/', auth, async (request, reply) => {
+  fastify.get('/', auth, async (request, _reply) => {
     try {
       const userId = request.user.userId;
       const { page, pageSize, limit = 50, offset = 0 } = request.query as {
@@ -97,7 +97,7 @@ export const subscriptionRoutes: FastifyPluginAsync = async (fastify) => {
     }
   });
 
-  fastify.get('/dashboard/summary', auth, async (request, reply) => {
+  fastify.get('/dashboard/summary', auth, async (request, _reply) => {
     try {
       const userId = request.user.userId;
 

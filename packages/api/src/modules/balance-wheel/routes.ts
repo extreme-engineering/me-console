@@ -47,7 +47,7 @@ export const balanceWheelRoutes: FastifyPluginAsync = async (fastify) => {
   // 获取平衡轮历史数据
   fastify.get('/history', {
     onRequest: [fastify.authenticate],
-    handler: async (request, reply) => {
+    handler: async (request, _reply) => {
       try {
         const userId = request.user.userId;
         const { limit = 10 } = request.query as { limit?: number };

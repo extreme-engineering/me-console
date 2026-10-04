@@ -42,7 +42,7 @@ export const insightRoutes: FastifyPluginAsync = async (fastify) => {
   // 获取洞察笔记列表
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-    handler: async (request, reply) => {
+    handler: async (request, _reply) => {
       try {
         const userId = request.user.userId;
         const { category, limit = 50, search, page = 1, sortBy = 'createdAt', sortOrder = 'desc' } = request.query as {

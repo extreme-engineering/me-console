@@ -13,15 +13,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'OPEN_MEOS') {
-    chrome.runtime.sendMessage({ type: 'GET_EXTENSION_ID' }, (response) => {
-      if (response && response.extensionId) {
-        chrome.tabs.create({
-          url: chrome.runtime.getURL('index.html'),
-        });
-      }
-    });
-  }
   return true;
 });
 // ============ 创作者后台指标采集（启发式，需按各平台后台实测校准） ============

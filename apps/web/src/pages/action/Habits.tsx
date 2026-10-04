@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { format, subDays, startOfDay, isSameDay } from 'date-fns';
 import { Plus, Check, Flame, TrendingUp } from 'lucide-react';
-import api from '../../lib/api';
+import type { Goal, Habit as SharedHabit, HabitLog } from '@meos/shared';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import Modal from '../../components/Modal';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import HealthTrackerView from '../../components/HealthTrackerView';
@@ -10,23 +11,11 @@ import ConfirmDialog from '../../components/ConfirmDialog';
 import MockBadge from '../../components/MockBadge';
 import { isMockItem } from '../../lib/mockFlag';
 
-interface HabitLog { id: string; date: string; }
+// goalTitle 由 /habits 联表返回，shared 类型暂未包含，页面本地补充
+type Habit = SharedHabit & { goalTitle?: string };
 
-interface Habit {
-  id: string;
-  title: string;
-  description?: string;
-  frequency: 'daily' | 'weekly';
-  targetPerWeek?: number;
-  color: string;
-  goalId?: string;
-  goalTitle?: string;
-  logs: HabitLog[];
-  mock?: boolean;
-  createdAt: string;
-}
-
-interface Goal { id: string; title: string; }
+interface HabitsResponse { habits: Habit[] }
+interface GoalsResponse { goals: Goal[] }
 
 const COLOR_PRESETS = [
   { name: 'slate', hex: '#64748B' },
@@ -39,7 +28,7 @@ const COLOR_PRESETS = [
 
 
 
-function getStreak(logs: HabitLog[]): number {
+function getStreak(logs?: HabitLog[]): number {
   if (!logs?.length) return 0;
   const logDates = logs.map((l) => startOfDay(new Date(l.date))).sort((a, b) => b.getTime() - a.getTime());
   const uniqueDays = Array.from(new Set(logDates.map((d) => d.getTime()))).sort((a, b) => b - a);
@@ -69,34 +58,31 @@ const defaultForm = {
 
 export default function Habits() {
   const today = startOfDay(new Date());
-  const [habits, setHabits] = useState<Habit[]>([]);
-  const [loading, setLoading] = useState(true);
+  const habitsQuery = useApiQuery<HabitsResponse>(['habits'], '/habits');
+  const goalsQuery = useApiQuery<GoalsResponse>(['goals'], '/goals');
+
   const [showModal, setShowModal] = useState(false);
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
   const [detailHabit, setDetailHabit] = useState<string | null>(null);
-  const [goals, setGoals] = useState<Goal[]>([]);
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'habits' | 'health'>('habits');
 
-  const fetchHabits = useCallback(async () => {
-    try {
-      const res = await api.get('/habits');
-      setHabits(res.data?.habits ?? []);
-    } catch { setHabits([]); }
-    finally { setLoading(false); }
-  }, []);
+  const habits = habitsQuery.data?.habits ?? [];
+  const goals = goalsQuery.data?.goals ?? [];
 
-  const fetchGoals = useCallback(async () => {
-    try {
-      const res = await api.get('/goals');
-      setGoals(res.data?.goals ?? []);
-    } catch { setGoals([]); }
-  }, []);
-
-  useEffect(() => { fetchHabits(); fetchGoals(); }, [fetchHabits, fetchGoals]);
+  const createHabit = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/habits', data), [['habits'], ['goals']]);
+  const updateHabit = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/habits/${id}`, data),
+    [['habits'], ['goals']]
+  );
+  const deleteHabit = useApiMutation((id: string) => apiRequest('delete', `/habits/${id}`), [['habits'], ['goals']]);
+  const logHabit = useApiMutation(
+    ({ habitId, date }: { habitId: string; date: string }) => apiRequest('post', `/habits/${habitId}/log`, { date }),
+    [['habits'], ['goals']]
+  );
 
   const openAdd = () => { setEditingHabit(null); setForm(defaultForm); setShowModal(true); };
 
@@ -117,7 +103,7 @@ export default function Habits() {
     if (!form.title.trim()) return;
     setSaving(true);
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         title: form.title.trim(),
         description: form.description.trim() || undefined,
         frequency: form.frequency,
@@ -125,18 +111,16 @@ export default function Habits() {
         color: form.color,
         goalId: form.goalId || undefined,
       };
-      if (editingHabit) await api.patch(`/habits/${editingHabit.id}`, payload);
-      else await api.post('/habits', payload);
+      if (editingHabit) await updateHabit.mutateAsync({ id: editingHabit.id, data: payload });
+      else await createHabit.mutateAsync(payload);
       setShowModal(false);
-      await fetchHabits();
     } finally { setSaving(false); }
   };
 
   const toggleLog = async (habit: Habit) => {
     const todayStr = format(today, 'yyyy-MM-dd');
     try {
-      await api.post(`/habits/${habit.id}/log`, { date: todayStr });
-      await fetchHabits();
+      await logHabit.mutateAsync({ habitId: habit.id, date: todayStr });
     } catch {}
   };
 
@@ -148,12 +132,11 @@ export default function Habits() {
     if (!confirmDelete) return;
     setDeleting(confirmDelete);
     try {
-      await api.delete(`/habits/${confirmDelete}`);
-      await fetchHabits();
+      await deleteHabit.mutateAsync(confirmDelete);
     } finally { setDeleting(null); setConfirmDelete(null); }
   };
 
-  if (loading) {
+  if (habitsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner />
@@ -242,8 +225,7 @@ export default function Habits() {
                       {isMockItem(habit) && (
                         <MockBadge
                           onClick={async () => {
-                            await api.patch(`/habits/${habit.id}`, { mock: false });
-                            fetchHabits();
+                            await updateHabit.mutateAsync({ id: habit.id, data: { mock: false } });
                           }}
                         />
                       )}
@@ -281,7 +263,7 @@ export default function Habits() {
                               key={dateStr}
                               className="w-4 h-4 rounded-full"
                               style={{
-                                backgroundColor: filled ? habit.color : 'var(--color-bg-tertiary)',
+                                backgroundColor: filled ? (habit.color ?? undefined) : 'var(--color-bg-tertiary)',
                                 border: filled ? 'none' : '1.5px solid var(--color-border)',
                               }}
                               title={format(day, 'MMM d')}
@@ -338,7 +320,7 @@ export default function Habits() {
                           key={dateStr}
                           className="w-5 h-5 rounded-sm"
                           style={{
-                            backgroundColor: filled ? habit.color : 'var(--color-bg-secondary)',
+                            backgroundColor: filled ? (habit.color ?? undefined) : 'var(--color-bg-secondary)',
                             opacity: filled ? 0.8 : 1,
                           }}
                           title={format(day, 'MMM d, yyyy')}

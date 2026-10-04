@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import LineChart from '../../components/charts/LineChart';
-import api from '../../lib/api';
+import { useApiQuery } from '../../lib/api-queries';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
 import type { BrandOverview, ContentStatus } from '@meos/shared';
@@ -18,29 +17,16 @@ const CHANNEL_STATUS_COLORS: Record<string, string> = { active: '#10b981', pause
 const LINE_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 export default function Overview() {
-  const [data, setData] = useState<BrandOverview | null>(null);
-  const [loading, setLoading] = useState(true);
+  const overviewQuery = useApiQuery<BrandOverview>(['brand/overview'], '/brand/overview');
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await api.get('/brand/overview');
-        setData(res.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  if (loading) {
+  if (overviewQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner />
       </div>
     );
   }
+  const data = overviewQuery.data;
   if (!data) return <EmptyState title="加载失败" description="无法获取品牌总览，请确认后端已启动" />;
 
   const maxLength = Math.max(0, ...data.trends.map((t) => t.series.length));

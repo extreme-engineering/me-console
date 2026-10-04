@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, ExternalLink } from 'lucide-react';
-import api from '../../lib/api';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import Modal from '../../components/Modal';
 import FormField from '../../components/FormField';
 import EmptyState from '../../components/EmptyState';
 import MockBadge, { MockClaimField } from '../../components/MockBadge';
 import { WORK_TYPE_LABELS, WORK_TYPE_ICONS, WORK_STATUS_LABELS, WORK_STATUS_ORDER } from './constants';
 import type { Work } from '@meos/shared';
+import { toast } from '../../stores/toastStore';
 
 const emptyForm = {
   name: '',
@@ -19,27 +20,26 @@ const emptyForm = {
   isMock: false,
 };
 
+interface WorksResponse {
+  works: Work[];
+}
+
 export default function Works() {
-  const [works, setWorks] = useState<Work[]>([]);
-  const [loading, setLoading] = useState(true);
+  const worksQuery = useApiQuery<WorksResponse>(['brand/works'], '/brand/works');
+  const works = worksQuery.data?.works ?? [];
+
   const [editing, setEditing] = useState<Work | null>(null);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(emptyForm);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await api.get('/brand/works');
-      setWorks(res.data.works || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const createWork = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/brand/works', data), [
+    ['brand/works'],
+  ]);
+  const updateWork = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/brand/works/${id}`, data),
+    [['brand/works']]
+  );
+  const deleteWork = useApiMutation((id: string) => apiRequest('delete', `/brand/works/${id}`), [['brand/works']]);
 
   const openCreate = () => {
     setForm(emptyForm);
@@ -63,7 +63,7 @@ export default function Works() {
   const handleCreate = async () => {
     if (!form.name.trim()) return;
     try {
-      await api.post('/brand/works', {
+      await createWork.mutateAsync({
         name: form.name.trim(),
         type: form.type,
         status: form.status,
@@ -73,44 +73,44 @@ export default function Works() {
         launchedAt: form.launchedAt || null,
       });
       setCreating(false);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const handleSave = async () => {
     if (!editing) return;
     try {
-      await api.patch(`/brand/works/${editing.id}`, {
-        name: form.name,
-        type: form.type,
-        status: form.status,
-        description: form.description || null,
-        progress: form.progress || null,
-        url: form.url || null,
-        launchedAt: form.launchedAt || null,
-        isMock: form.isMock,
+      await updateWork.mutateAsync({
+        id: editing.id,
+        data: {
+          name: form.name,
+          type: form.type,
+          status: form.status,
+          description: form.description || null,
+          progress: form.progress || null,
+          url: form.url || null,
+          launchedAt: form.launchedAt || null,
+          isMock: form.isMock,
+        },
       });
       setEditing(null);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const handleDelete = async () => {
     if (!editing) return;
     try {
-      await api.delete(`/brand/works/${editing.id}`);
+      await deleteWork.mutateAsync(editing.id);
       setEditing(null);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
-  if (loading) {
+  if (worksQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-400" />

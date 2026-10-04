@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -9,7 +9,6 @@ interface ModalProps {
   maxWidth?: string;
 }
 
-// Tailwind max-w 标度到实际宽度的映射（组件使用内联样式，不经 Tailwind 编译）
 const MAX_WIDTHS: Record<string, string> = {
   sm: '24rem',
   md: '28rem',
@@ -20,9 +19,32 @@ const MAX_WIDTHS: Record<string, string> = {
   '4xl': '56rem',
 };
 
-export default function Modal({ open, onClose, title, children, maxWidth = 'max-w-md' }: ModalProps) {
-  const backdropRef = useRef<HTMLDivElement>(null);
+const FOCUSABLE = 'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+export default function Modal({ open, onClose, title, children, maxWidth = 'max-w-md' }: ModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  // Save and restore focus
+  useEffect(() => {
+    if (open) {
+      previousFocusRef.current = document.activeElement as HTMLElement;
+      // Focus first focusable element inside modal, or the modal itself
+      requestAnimationFrame(() => {
+        const first = modalRef.current?.querySelector<HTMLElement>(FOCUSABLE);
+        if (first) {
+          first.focus();
+        } else {
+          modalRef.current?.focus();
+        }
+      });
+    } else {
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    }
+  }, [open]);
+
+  // Body scroll lock
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden';
@@ -32,6 +54,7 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
     return () => { document.body.style.overflow = ''; };
   }, [open]);
 
+  // ESC close
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -39,6 +62,29 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
     if (open) window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
   }, [open, onClose]);
+
+  // Focus trap
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab' || !modalRef.current) return;
+
+    const focusable = Array.from(modalRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  }, []);
 
   if (!open) return null;
 
@@ -51,13 +97,16 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
       aria-label={title}
     >
       <div
-        ref={backdropRef}
         className="absolute inset-0"
         style={{ backgroundColor: 'rgba(26, 25, 24, 0.4)', backdropFilter: 'blur(4px)' }}
         onClick={onClose}
+        aria-hidden="true"
       />
       <div
-        className="relative bg-[var(--color-surface)] w-full rounded-xl overflow-hidden"
+        ref={modalRef}
+        tabIndex={-1}
+        onKeyDown={handleKeyDown}
+        className="relative bg-[var(--color-surface)] w-full rounded-xl overflow-hidden outline-none"
         style={{
           maxWidth: MAX_WIDTHS[maxWidth.replace('max-w-', '')] ?? maxWidth,
           boxShadow: 'var(--shadow-xl)',
@@ -72,7 +121,7 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
             className="text-base font-medium"
             style={{
               fontFamily: 'var(--font-display)',
-              color: 'var(--color-text-primary)',
+              color: 'var(--color-ink)',
             }}
           >
             {title}
@@ -80,8 +129,8 @@ export default function Modal({ open, onClose, title, children, maxWidth = 'max-
           <button
             onClick={onClose}
             className="p-2 rounded-lg transition-colors"
-            style={{ color: 'var(--color-text-tertiary)' }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-bg-secondary)'}
+            style={{ color: 'var(--color-ink-3)' }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-paper-2)'}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
             aria-label="关闭"
           >

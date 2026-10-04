@@ -14,7 +14,7 @@ const updateVisionSchema = z.object({
 export const visionRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-  }, async (request, reply) => {
+  }, async (request, _reply) => {
     try {
       const userId = request.user.userId;
       const vision = await prisma.vision.findFirst({
@@ -100,7 +100,7 @@ export const visionRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/history', {
     onRequest: [fastify.authenticate],
-  }, async (request, reply) => {
+  }, async (request, _reply) => {
     try {
       const userId = request.user.userId;
       const visions = await prisma.vision.findMany({

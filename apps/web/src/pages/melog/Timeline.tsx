@@ -1,19 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { RefreshCw, Search, Radio, Mic, Brain, Footprints, Moon, Scale, FileText, ListTodo } from 'lucide-react';
-import api from '../../lib/api';
+import type { MeLogEntry, MeLogOverview } from '@meos/shared';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
 import { CATEGORY_META, MELOG_CATEGORY_LIST, formatTime, type MeLogCategory } from './meta';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 
-interface MeLogEntry {
-  id: string;
-  category: string;
-  type: string;
-  title: string;
-  content?: string;
-  tags?: string;
-  actor?: string;
-  occurredAt: string;
+interface MeLogEntryRow extends MeLogEntry {
   source?: { name: string; adapter: string; category: string };
 }
 
@@ -28,6 +21,12 @@ interface ParsedCaptureItem {
   pace: string | null;
   occurredAt: string;
   raw: string;
+}
+
+interface CaptureSubmitResponse {
+  created: number;
+  healthRecords: number;
+  todos?: number;
 }
 
 const CAPTURE_TYPE_META: Record<string, { label: string; icon: typeof Brain; color: string }> = {
@@ -55,13 +54,23 @@ function QuickCaptureCard({ onSubmitted }: { onSubmitted: () => void }) {
 
   const selectedCount = items ? items.length - excluded.size : 0;
 
+  const parseCapture = useApiMutation(
+    (text: string) => apiRequest<{ items: ParsedCaptureItem[] }>('post', '/melog/capture/parse', { text })
+  );
+
+  const submitCapture = useApiMutation(
+    ({ text, exclude }: { text: string; exclude: number[] }) =>
+      apiRequest<CaptureSubmitResponse>('post', '/melog/capture', { text, exclude }),
+    [['melog/entries'], ['melog/overview']]
+  );
+
   const handleParse = async () => {
     if (!text.trim()) return;
     setBusy(true);
     setFeedback(null);
     try {
-      const res = await api.post('/melog/capture/parse', { text });
-      setItems(res.data.items || []);
+      const res = await parseCapture.mutateAsync(text);
+      setItems(res.items || []);
       setExcluded(new Set());
     } catch {
       setFeedback({ ok: false, message: '解析失败，请重试' });
@@ -83,10 +92,10 @@ function QuickCaptureCard({ onSubmitted }: { onSubmitted: () => void }) {
     if (!items) return;
     setBusy(true);
     try {
-      const res = await api.post('/melog/capture', { text, exclude: [...excluded] });
+      const res = await submitCapture.mutateAsync({ text, exclude: [...excluded] });
       setFeedback({
         ok: true,
-        message: `已写入：时间线 +${res.data.created}、健康记录 +${res.data.healthRecords}、待办 +${res.data.todos ?? 0}（重复提交会自动去重）`,
+        message: `已写入：时间线 +${res.created}、健康记录 +${res.healthRecords}、待办 +${res.todos ?? 0}（重复提交会自动去重）`,
       });
       setItems(null);
       setText('');
@@ -209,49 +218,33 @@ function QuickCaptureCard({ onSubmitted }: { onSubmitted: () => void }) {
   );
 }
 
-interface Overview {
-  totalEntries: number;
-  last7Days: number;
-  last30Days: number;
-  byCategory: { category: string; count: number; last7Days: number }[];
-  sources: { total: number; connected: number; error: number }[];
-}
-
 export default function Timeline() {
-  const [entries, setEntries] = useState<MeLogEntry[]>([]);
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [loading, setLoading] = useState(true);
   const [category, setCategory] = useState<MeLogCategory | ''>('');
   const [keyword, setKeyword] = useState('');
   const [query, setQuery] = useState('');
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (category) params.set('category', category);
-      if (query) params.set('q', query);
-      params.set('limit', '100');
-      const [entriesRes, overviewRes] = await Promise.all([
-        api.get(`/melog/entries?${params.toString()}`),
-        api.get('/melog/overview'),
-      ]);
-      setEntries(entriesRes.data.entries || []);
-      setOverview(overviewRes.data);
-    } catch {
-      setEntries([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [category, query]);
+  const params = new URLSearchParams();
+  if (category) params.set('category', category);
+  if (query) params.set('q', query);
+  params.set('limit', '100');
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const entriesQuery = useApiQuery<{ entries: MeLogEntryRow[]; total: number }>(
+    ['melog/entries', category, query],
+    `/melog/entries?${params.toString()}`
+  );
+  const overviewQuery = useApiQuery<MeLogOverview>(['melog/overview'], '/melog/overview');
+
+  const entries = entriesQuery.data?.entries ?? [];
+  const overview = overviewQuery.data ?? null;
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     setQuery(keyword.trim());
+  };
+
+  const handleRefresh = () => {
+    entriesQuery.refetch();
+    overviewQuery.refetch();
   };
 
   const stats = [
@@ -285,7 +278,7 @@ export default function Timeline() {
       </div>
 
       {/* 口述打卡 */}
-      <QuickCaptureCard onSubmitted={loadData} />
+      <QuickCaptureCard onSubmitted={handleRefresh} />
 
       {/* 筛选栏 */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -350,7 +343,7 @@ export default function Timeline() {
       </div>
 
       {/* 时间线 */}
-      {loading ? (
+      {entriesQuery.isLoading ? (
         <LoadingSpinner />
       ) : entries.length === 0 ? (
         <EmptyState

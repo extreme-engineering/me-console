@@ -2,11 +2,31 @@
 // 同步到 MeOS /api/brand/snapshots（开发模式免鉴权）。
 
 const BRAND_API = 'http://localhost:3001/api';
+const MEOS_APP_URLS = [
+  'http://localhost:3015',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://i76snwerw0t7.meoo.fun',
+];
 const BRAND_PLATFORMS = [
   { key: 'wechat-mp', label: '公众号' },
   { key: 'wechat-channels', label: '视频号' },
   { key: 'xiaohongshu', label: '小红书' },
 ];
+
+// 复用 popup 的 token 中继：优先从已登录的 MeOS 标签页读 localStorage，回退 chrome.storage
+function getToken(cb) {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (tab && tab.url && MEOS_APP_URLS.some((u) => tab.url.startsWith(u))) {
+      chrome.tabs.sendMessage(tab.id, { type: 'GET_MEOS_TOKEN' }, (res) => {
+        cb(res && res.token ? res.token : null);
+      });
+      return;
+    }
+    chrome.storage.local.get(['meos_token'], (result) => cb(result.meos_token || null));
+  });
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   const root = document.getElementById('brand-sync');
@@ -76,7 +96,14 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     status('同步中…', false);
     try {
-      const channelsRes = await fetch(`${BRAND_API}/brand/channels`);
+      const token = await new Promise((resolve) => getToken(resolve));
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const channelsRes = await fetch(`${BRAND_API}/brand/channels`, { headers });
+      if (channelsRes.status === 401) {
+        status('未登录：先打开 MeOS 页面登录一次，再同步', true);
+        return;
+      }
       if (!channelsRes.ok) throw new Error(`HTTP ${channelsRes.status}`);
       const { channels = [] } = await channelsRes.json();
       const matched = channels.filter((c) => c.platform === platform);
@@ -90,7 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const channelId = matched[0].id;
       const snapRes = await fetch(`${BRAND_API}/brand/snapshots`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ channelId, ...payload }),
       });
       if (!snapRes.ok) {

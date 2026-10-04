@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   format,
@@ -16,12 +16,22 @@ import {
   subYears,
 } from 'date-fns';
 import { Save, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
-import api from '../../lib/api';
+import type { PeriodicReview } from '@meos/shared';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import MockBadge from '../../components/MockBadge';
 import Daily from './Daily';
+import { toast } from '../../stores/toastStore';
 
 type Period = 'week' | 'month' | 'quarter' | 'year';
+
+interface ReviewItem extends PeriodicReview {
+  mock?: boolean;
+}
+
+interface ReviewsResponse {
+  reviews?: ReviewItem[];
+}
 
 const PERIOD_LABELS: Record<Period, string> = {
   week: '周',
@@ -36,8 +46,8 @@ function parseJsonArray(val: unknown): string[] {
     try {
       const parsed = JSON.parse(val);
       return Array.isArray(parsed) ? parsed : [];
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
       return [];
     }
   }
@@ -84,8 +94,6 @@ export default function Review() {
 
   const [period, setPeriod] = useState<Period>('week');
   const [periodOffset, setPeriodOffset] = useState(0);
-  const [reviews, setReviews] = useState<{ id: string; period: string; startDate: string; endDate: string; achievements?: unknown; challenges?: unknown; insights?: string; nextFocus?: unknown; mock?: boolean }[]>([]);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -107,20 +115,12 @@ export default function Review() {
     setPeriodOffset(0);
   }, [period]);
 
-  const loadReviews = useCallback(async () => {
-    try {
-      const res = await api.get('/reviews');
-      setReviews(res.data.reviews || res.data || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const reviewsQuery = useApiQuery<ReviewsResponse>(['reviews'], '/reviews');
+  const reviews = useMemo(() => reviewsQuery.data?.reviews ?? [], [reviewsQuery.data]);
 
-  useEffect(() => {
-    loadReviews();
-  }, [loadReviews]);
+  const createReview = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/reviews', data), [['reviews']]);
+  const updateReview = useApiMutation(({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/reviews/${id}`, data), [['reviews']]);
+  const deleteReview = useApiMutation((id: string) => apiRequest('delete', `/reviews/${id}`), [['reviews']]);
 
   useEffect(() => {
     const match = reviews.find((r) => {
@@ -167,13 +167,12 @@ export default function Review() {
         nextFocus: JSON.stringify(nextFocus),
       };
       if (existingId) {
-        await api.patch(`/reviews/${existingId}`, payload);
+        await updateReview.mutateAsync({ id: existingId, data: payload });
       } else {
-        await api.post('/reviews', payload);
+        await createReview.mutateAsync(payload);
       }
-      await loadReviews();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     } finally {
       setSaving(false);
     }
@@ -184,16 +183,15 @@ export default function Review() {
     if (!window.confirm('确定删除这个周期的复盘记录？')) return;
     setDeleting(true);
     try {
-      await api.delete(`/reviews/${existingId}`);
-      await loadReviews();
-    } catch (err) {
-      console.error(err);
+      await deleteReview.mutateAsync(existingId);
+    } catch {
+      toast.error('操作失败，请重试');
     } finally {
       setDeleting(false);
     }
   };
 
-  if (loading) {
+  if (reviewsQuery.isLoading) {
     return <LoadingSpinner />;
   }
 
@@ -419,8 +417,7 @@ export default function Review() {
         {existingId && reviews.find((r) => r.id === existingId)?.mock && (
           <MockBadge
             onClick={async () => {
-              await api.patch(`/reviews/${existingId}`, { mock: false });
-              await loadReviews();
+              await updateReview.mutateAsync({ id: existingId, data: { mock: false } });
             }}
           />
         )}

@@ -50,6 +50,7 @@ model User {
   brandDistributions ContentDistribution[]
   works              Work[]
   metricSnapshots    MetricSnapshot[]
+  opportunities      Opportunity[]
 }
 
 // ==================== 方向 (Direction) ====================
@@ -836,4 +837,30 @@ model MetricSnapshot {
   channel PlatformChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@index([channelId, recordedAt])
+}
+
+// 商机（FDE / 冥想师 / 外贸三条业务线共用一张表，track 区分）
+model Opportunity {
+  id       String @id @default(uuid())
+  userId   String
+  track    String // fde | meditation | trade
+  title    String
+  stage    String @default("lead") // lead | contacted | proposal | negotiation | won | delivered | lost
+  company  String?
+  category String? // 自由文本 + 前端 datalist 建议（如 机构合作 / 课程 / 定制开发）
+  source   String? // 来源渠道（如 转介绍 / 官网 / 朋友介绍）
+  partner  String? // 合伙人：潘震 / 叶佳 / 曹军 / 程朗，可空
+  contact  String? // 联系方式（姓名/电话/微信混填）
+  amount   Float? // 预估金额（元）
+  link     String? // 相关链接（官网 / 演示站 / 参考资料）
+  notes    String?
+  order    Int    @default(0)
+  isMock   Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, track])
+  @@index([userId, stage])
 }

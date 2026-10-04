@@ -1,21 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Play, Sparkles, Clock3, CalendarClock, Cpu } from 'lucide-react';
-import api from '../../lib/api';
+import type { MeLogOverview, MeLogRun, MeLogSkill } from '@meos/shared';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
 import Modal from '../../components/Modal';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import { formatTime } from './meta';
-
-interface MeLogSkill {
-  id: string;
-  slug: string;
-  name: string;
-  description?: string;
-  version: string;
-  source: string;
-  config?: string;
-  lastRunAt?: string;
-}
 
 type SkillEngine = 'auto' | 'rule' | 'llm';
 
@@ -35,14 +25,7 @@ function engineOf(skill: MeLogSkill): SkillEngine {
   return 'auto';
 }
 
-interface MeLogRun {
-  id: string;
-  skillId: string;
-  status: string;
-  summary?: string;
-  result?: string;
-  stats?: string;
-  createdAt: string;
+interface MeLogRunRow extends MeLogRun {
   skill?: { name: string; slug: string };
 }
 
@@ -54,6 +37,18 @@ interface MeLogSchedule {
   intervalHours?: number;
   enabled: boolean;
   nextRunAt?: string;
+}
+
+interface SkillRunPayload {
+  skillId: string;
+  days?: number;
+}
+
+interface SchedulePayload {
+  skillId: string;
+  kind: 'daily' | 'interval';
+  dailyAt?: string;
+  intervalHours?: number;
 }
 
 const PERIOD_OPTIONS = [
@@ -83,52 +78,54 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export default function Skills() {
-  const [skills, setSkills] = useState<MeLogSkill[]>([]);
-  const [runs, setRuns] = useState<MeLogRun[]>([]);
-  const [schedulesBySkill, setSchedulesBySkill] = useState<Record<string, MeLogSchedule>>({});
-  const [llmInfo, setLlmInfo] = useState<{ configured: boolean; model?: string }>({ configured: false });
-  const [loading, setLoading] = useState(true);
   const [runningSlug, setRunningSlug] = useState('');
-  const [selectedRun, setSelectedRun] = useState<MeLogRun | null>(null);
+  const [selectedRun, setSelectedRun] = useState<MeLogRunRow | null>(null);
   const [periodBySlug, setPeriodBySlug] = useState<Record<string, number>>({});
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [skillsRes, runsRes, schedulesRes, overviewRes] = await Promise.all([
-        api.get('/melog/skills'),
-        api.get('/melog/runs'),
-        api.get('/melog/schedules'),
-        api.get('/melog/overview'),
-      ]);
-      setSkills(skillsRes.data.skills || []);
-      setRuns(runsRes.data.runs || []);
-      setLlmInfo(overviewRes.data.llm || { configured: false });
-      const map: Record<string, MeLogSchedule> = {};
-      for (const schedule of (schedulesRes.data.schedules || []) as MeLogSchedule[]) {
-        map[schedule.skillId] = schedule;
-      }
-      setSchedulesBySkill(map);
-    } catch {
-      setSkills([]);
-      setRuns([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const skillsQuery = useApiQuery<{ skills: MeLogSkill[] }>(['melog/skills'], '/melog/skills');
+  const runsQuery = useApiQuery<{ runs: MeLogRunRow[] }>(['melog/runs'], '/melog/runs');
+  const schedulesQuery = useApiQuery<{ schedules: MeLogSchedule[] }>(['melog/schedules'], '/melog/schedules');
+  const overviewQuery = useApiQuery<MeLogOverview>(['melog/overview'], '/melog/overview');
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const skills = skillsQuery.data?.skills ?? [];
+  const runs = runsQuery.data?.runs ?? [];
+  const llmInfo = overviewQuery.data?.llm || { configured: false };
+
+  const schedulesBySkill = useMemo(() => {
+    const map: Record<string, MeLogSchedule> = {};
+    for (const schedule of schedulesQuery.data?.schedules ?? []) {
+      map[schedule.skillId] = schedule;
+    }
+    return map;
+  }, [schedulesQuery.data]);
+
+  const runSkill = useApiMutation(
+    ({ skillId, days }: SkillRunPayload) =>
+      apiRequest<{ run: MeLogRunRow }>('post', `/melog/skills/${skillId}/run`, days ? { days } : {}),
+    [['melog/skills'], ['melog/runs']]
+  );
+
+  const createSchedule = useApiMutation(
+    (data: SchedulePayload) => apiRequest('post', '/melog/schedules', data),
+    [['melog/schedules']]
+  );
+
+  const deleteSchedule = useApiMutation(
+    (id: string) => apiRequest('delete', `/melog/schedules/${id}`),
+    [['melog/schedules']]
+  );
+
+  const updateSkillEngine = useApiMutation(
+    ({ id, config }: { id: string; config: string }) => apiRequest('patch', `/melog/skills/${id}`, { config }),
+    [['melog/skills']]
+  );
 
   const handleRun = async (skill: MeLogSkill) => {
     setRunningSlug(skill.slug);
     try {
       const days = periodBySlug[skill.slug];
-      const res = await api.post(`/melog/skills/${skill.id}/run`, days ? { days } : {});
-      const created = res.data.run as MeLogRun;
+      const { run: created } = await runSkill.mutateAsync({ skillId: skill.id, days });
       setSelectedRun({ ...created, skill: { name: skill.name, slug: skill.slug } });
-      loadData();
     } catch {
       // 运行失败保持静默，历史记录中可见
     } finally {
@@ -140,31 +137,30 @@ export default function Skills() {
     const existing = schedulesBySkill[skill.id];
     try {
       if (value === 'manual') {
-        if (existing) await api.delete(`/melog/schedules/${existing.id}`);
+        if (existing) await deleteSchedule.mutateAsync(existing.id);
       } else if (value.startsWith('daily:')) {
-        await api.post('/melog/schedules', { skillId: skill.id, kind: 'daily', dailyAt: value.slice(6) });
+        await createSchedule.mutateAsync({ skillId: skill.id, kind: 'daily', dailyAt: value.slice(6) });
       } else if (value.startsWith('interval:')) {
-        await api.post('/melog/schedules', { skillId: skill.id, kind: 'interval', intervalHours: Number(value.slice(9)) });
+        await createSchedule.mutateAsync({ skillId: skill.id, kind: 'interval', intervalHours: Number(value.slice(9)) });
       }
-      loadData();
     } catch {
       // 定时设置失败保持静默，重新加载恢复当前值
-      loadData();
+      schedulesQuery.refetch();
     }
   };
 
   const handleEngineChange = async (skill: MeLogSkill, engine: SkillEngine) => {
     try {
-      await api.patch(`/melog/skills/${skill.id}`, {
+      await updateSkillEngine.mutateAsync({
+        id: skill.id,
         config: JSON.stringify({ ...(() => { try { return JSON.parse(skill.config || '{}'); } catch { return {}; } })(), engine }),
       });
-      loadData();
     } catch {
-      loadData();
+      skillsQuery.refetch();
     }
   };
 
-  if (loading) return <LoadingSpinner />;
+  if (skillsQuery.isLoading || runsQuery.isLoading || schedulesQuery.isLoading || overviewQuery.isLoading) return <LoadingSpinner />;
 
   return (
     <div>

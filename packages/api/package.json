@@ -14,12 +14,13 @@
     "db:studio": "prisma studio --schema=src/prisma/schema.prisma",
     "db:seed": "tsx src/prisma/seed.ts",
     "db:seed:brand": "tsx src/prisma/seed-brand.ts",
-    "lint": "eslint src --ext .ts --report-unused-disable-directives --max-warnings 200",
+    "lint": "eslint src --ext .ts --report-unused-disable-directives --max-warnings 0",
     "test": "vitest run"
   },
   "dependencies": {
     "@fastify/cors": "^8.5.0",
     "@fastify/jwt": "^7.2.4",
+    "@fastify/rate-limit": "^9",
     "@fastify/swagger": "^8.15.0",
     "@fastify/swagger-ui": "^3.1.0",
     "@meos/shared": "workspace:*",

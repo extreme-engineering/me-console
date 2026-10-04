@@ -1,20 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
-import api from '../lib/api';
+import { useState } from 'react';
+import type { MindsetSlogan } from '@meos/shared';
 import MockBadge from '../components/MockBadge';
 import { isMockItem } from '../lib/mockFlag';
+import { apiRequest, useApiMutation, useApiQuery } from '../lib/api-queries';
+import { toast } from '../stores/toastStore';
 
 const categories = ['整体置顶', '生活', '工作', '身体', '心理', '物品', '经济'] as const;
 type Category = typeof categories[number];
-
-interface MindsetSlogan {
-  id: string;
-  content: string;
-  category: string;
-  order: number;
-  mock?: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
 
 interface SloganForm {
   content: string;
@@ -22,10 +14,12 @@ interface SloganForm {
   order: number;
 }
 
+interface MindsetSloganRow extends MindsetSlogan {
+  mock?: boolean;
+}
+
 export default function MindsetView() {
-  const [slogans, setSlogans] = useState<MindsetSlogan[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<Category>('整体置顶');
-  const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingSlogan, setEditingSlogan] = useState<MindsetSlogan | null>(null);
   const [form, setForm] = useState<SloganForm>({
@@ -35,20 +29,28 @@ export default function MindsetView() {
   });
   const [submitting, setSubmitting] = useState(false);
 
-  const loadSlogans = useCallback(async () => {
-    try {
-      const response = await api.get('/mindsets');
-      setSlogans(response.data.slogans);
-    } catch (error) {
-      console.error('加载失败:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const slogansQuery = useApiQuery<{ slogans: MindsetSloganRow[] }>(['mindsets'], '/mindsets');
+  const slogans = slogansQuery.data?.slogans ?? [];
 
-  useEffect(() => {
-    loadSlogans();
-  }, [loadSlogans]);
+  const createSlogan = useApiMutation(
+    (data: SloganForm) => apiRequest('post', '/mindsets', data),
+    [['mindsets']]
+  );
+
+  const updateSlogan = useApiMutation(
+    ({ id, data }: { id: string; data: SloganForm }) => apiRequest('patch', `/mindsets/${id}`, data),
+    [['mindsets']]
+  );
+
+  const deleteSlogan = useApiMutation(
+    (id: string) => apiRequest('delete', `/mindsets/${id}`),
+    [['mindsets']]
+  );
+
+  const clearSloganMock = useApiMutation(
+    (id: string) => apiRequest('patch', `/mindsets/${id}`, { mock: false }),
+    [['mindsets']]
+  );
 
   const filteredSlogans = slogans.filter(s => s.category === selectedCategory);
 
@@ -58,16 +60,15 @@ export default function MindsetView() {
     setSubmitting(true);
     try {
       if (editingSlogan) {
-        await api.patch(`/mindsets/${editingSlogan.id}`, form);
+        await updateSlogan.mutateAsync({ id: editingSlogan.id, data: form });
       } else {
-        await api.post('/mindsets', form);
+        await createSlogan.mutateAsync(form);
       }
       setShowModal(false);
       setEditingSlogan(null);
       setForm({ content: '', category: selectedCategory, order: 0 });
-      await loadSlogans();
-    } catch (error) {
-      console.error('保存失败:', error);
+    } catch {
+      toast.error('保存失败');
     } finally {
       setSubmitting(false);
     }
@@ -86,10 +87,9 @@ export default function MindsetView() {
   const handleDelete = async (id: string) => {
     if (!confirm('确定要删除这条格言吗？')) return;
     try {
-      await api.delete(`/mindsets/${id}`);
-      loadSlogans();
-    } catch (error) {
-      console.error('删除失败:', error);
+      await deleteSlogan.mutateAsync(id);
+    } catch {
+      toast.error('删除失败');
     }
   };
 
@@ -108,7 +108,7 @@ export default function MindsetView() {
     });
   };
 
-  if (loading) {
+  if (slogansQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="w-5 h-5 border border-slate-200 border-t-slate-900 rounded-full animate-spin" />
@@ -179,8 +179,7 @@ export default function MindsetView() {
                     {isMockItem(slogan) && (
                       <MockBadge
                         onClick={async () => {
-                          await api.patch(`/mindsets/${slogan.id}`, { mock: false });
-                          await loadSlogans();
+                          await clearSloganMock.mutateAsync(slogan.id);
                         }}
                       />
                     )}

@@ -1,7 +1,13 @@
 // MeOS Chrome Extension - Popup Script
 
-const MEOS_APP_URLS = ['http://localhost:3000', 'http://localhost:5173', 'https://meos.app'];
+const MEOS_APP_URLS = [
+  'http://localhost:3015',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'https://i76snwerw0t7.meoo.fun',
+];
 const API_BASE = 'http://localhost:3001/api';
+const APP_URL = 'https://i76snwerw0t7.meoo.fun';
 
 document.addEventListener('DOMContentLoaded', () => {
   const statsContainer = document.getElementById('stats');
@@ -65,7 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setStatus('添加中…', false);
     getToken((token) => {
       if (!token) {
-        setStatus('未登录：先打开一次 MeOS 页面（localhost:3000）再试', true);
+        setStatus('未登录：先打开一次 MeOS 页面并登录，再试', true);
         return;
       }
       fetch(`${API_BASE}/todos`, {
@@ -88,7 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   openBtn.addEventListener('click', () => {
-    chrome.tabs.create({ url: 'http://localhost:3000' });
+    chrome.tabs.create({ url: APP_URL });
   });
 
   quickAddBtn.addEventListener('click', () => {

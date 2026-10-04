@@ -66,13 +66,13 @@ cd ../..
 pnpm dev             # 同时启动前后端
 # 或分别启动：
 pnpm backend:dev     # 仅后端 → http://localhost:3001
-pnpm web:dev         # 仅前端 → http://localhost:3000
+pnpm web:dev         # 仅前端 → http://localhost:3015
 ```
 
 注意这条路径由 turbo 前台托管，Ctrl+C 停当前终端；**没有** `meos` 的 pidfile 与进程组监管，
 所以中途 kill 掉终端可能留下占端口的孤儿，此时 `meos status` 会把它标成 `running*`（未纳管）。
 
-首次访问 http://localhost:3000 ，点击「立即注册」创建账号，系统会自动初始化 8 个默认生活领域（职业、健康、家庭、财务、学习、社交、休闲、精神）。
+首次访问 http://localhost:3015 ，点击「立即注册」创建账号，系统会自动初始化 8 个默认生活领域（职业、健康、家庭、财务、学习、社交、休闲、精神）。
 
 ## 4. 环境变量
 

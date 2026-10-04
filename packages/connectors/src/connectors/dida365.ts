@@ -81,6 +81,8 @@ export interface Dida365ConnectorOptions {
   sourceName?: string;
   /** 打卡回溯天数，默认 30 */
   backfillDays?: number;
+  /** 回溯窗口终点（ISO 日期；缺省取当前时间，测试注入固定值以保持确定性） */
+  today?: string;
   /** 是否同步习惯打卡，默认 true */
   includeHabits?: boolean;
   /** 是否同步任务备注，默认 true */
@@ -285,7 +287,7 @@ export function mapTaskNotes(tasks: DidaTask[], projectNameById: Map<string, str
 export async function collectDida365Entries(options: Dida365ConnectorOptions): Promise<Dida365CollectResult> {
   const apiBase = (options.apiBase || DEFAULT_API_BASE).replace(/\/+$/, '');
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
-  const today = new Date();
+  const today = options.today ? new Date(options.today) : new Date();
   const endDay = dayKey(today);
   const startDay = dayKey(new Date(today.getTime() - ((options.backfillDays ?? 30) - 1) * DAY_MS));
 

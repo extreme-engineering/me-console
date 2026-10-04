@@ -2,7 +2,7 @@
 // Mirrors the API interface used throughout the app
 
 const DB_NAME = 'MeOS';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 interface User {
   id: string;
@@ -364,6 +364,26 @@ interface SubscriptionDashboardSummary {
   };
 }
 
+interface Opportunity {
+  id: string;
+  userId: string;
+  track: 'fde' | 'meditation' | 'trade';
+  title: string;
+  stage: 'lead' | 'contacted' | 'proposal' | 'negotiation' | 'won' | 'delivered' | 'lost';
+  company?: string | null;
+  category?: string | null;
+  source?: string | null;
+  partner?: string | null;
+  contact?: string | null;
+  amount?: number | null;
+  link?: string | null;
+  notes?: string | null;
+  order: number;
+  isMock?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 let dbInstance: IDBDatabase | null = null;
 
 function generateId(): string {
@@ -544,6 +564,12 @@ async function openDB(): Promise<IDBDatabase> {
         const store = db.createObjectStore('keyResults', { keyPath: 'id' });
         store.createIndex('goalId', 'goalId', { unique: false });
         store.createIndex('userId', 'userId', { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains('opportunities')) {
+        const store = db.createObjectStore('opportunities', { keyPath: 'id' });
+        store.createIndex('userId', 'userId', { unique: false });
+        store.createIndex('track', 'track', { unique: false });
       }
     };
   });
@@ -1898,6 +1924,70 @@ export const localDB = {
 
     async deleteConnection(connId: string): Promise<void> {
       await remove('workflowConnections', connId);
+    },
+  },
+
+  opportunities: {
+    async getAll(): Promise<{ opportunities: Opportunity[] }> {
+      const opportunities = currentUserId
+        ? await getByIndex<Opportunity>('opportunities', 'userId', currentUserId)
+        : [];
+      return { opportunities };
+    },
+
+    async getOne(id: string): Promise<{ opportunity: Opportunity }> {
+      const db = await openDB();
+      const opportunity = await new Promise<Opportunity>((resolve, reject) => {
+        const tx = db.transaction('opportunities', 'readonly');
+        const store = tx.objectStore('opportunities');
+        const request = store.get(id);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      return { opportunity };
+    },
+
+    async create(data: Partial<Opportunity>): Promise<{ opportunity: Opportunity }> {
+      const now = new Date().toISOString();
+      const opportunity: Opportunity = {
+        id: generateId(),
+        userId: currentUserId || '',
+        track: data.track || 'fde',
+        title: data.title || '',
+        stage: data.stage || 'lead',
+        company: data.company,
+        category: data.category,
+        source: data.source,
+        partner: data.partner,
+        contact: data.contact,
+        amount: data.amount,
+        link: data.link,
+        notes: data.notes,
+        order: data.order ?? 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await add('opportunities', opportunity);
+      return { opportunity };
+    },
+
+    async update(id: string, data: Partial<Opportunity>): Promise<{ opportunity: Opportunity }> {
+      const db = await openDB();
+      const opportunity = await new Promise<Opportunity>((resolve, reject) => {
+        const tx = db.transaction('opportunities', 'readwrite');
+        const store = tx.objectStore('opportunities');
+        const request = store.get(id);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+
+      const updated = { ...opportunity, ...data, updatedAt: new Date().toISOString() };
+      await update('opportunities', updated);
+      return { opportunity: updated };
+    },
+
+    async delete(id: string): Promise<void> {
+      await remove('opportunities', id);
     },
   },
 };

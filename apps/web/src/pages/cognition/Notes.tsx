@@ -1,14 +1,13 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useMemo, useState } from 'react';
+import type { InsightNote } from '@meos/shared';
 import { Plus, Lightbulb, Clock } from 'lucide-react';
-import api from '../../lib/api';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
+import { toast } from '../../stores/toastStore';
 
-interface Note {
-  id: string;
-  content: string;
-  createdAt: string;
-}
+// /insights 在本地/远端模式下可能返回数组或 { insights: [...] } 信封，与原页面的回退链保持一致
+type InsightsPayload = InsightNote[] | { insights?: InsightNote[] };
 
 const TYPE_COLORS = [
   { bg: '#FEF3C7', border: '#FDE68A', text: '#92400E' },
@@ -38,46 +37,38 @@ function formatTime(dateStr: string) {
 }
 
 export default function Notes() {
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [loading, setLoading] = useState(true);
+  const notesQuery = useApiQuery<InsightsPayload>(['insights'], '/insights');
   const [newNote, setNewNote] = useState('');
   const [adding, setAdding] = useState(false);
 
-  const loadNotes = useCallback(async () => {
-    try {
-      const res = await api.get('/insights');
-      const data = res.data.insights || res.data || [];
-      setNotes(data.sort((a: Note, b: Note) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-    } catch (err) {
-      console.error(err);
-      setNotes([]);
-    }
+  const createNote = useApiMutation(
+    (data: Record<string, unknown>) => apiRequest('post', '/insights', data),
+    [['insights']]
+  );
 
-    finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadNotes();
-  }, [loadNotes]);
+  const notes = useMemo(() => {
+    const data = notesQuery.data;
+    const list = Array.isArray(data) ? data : data?.insights || [];
+    return [...list].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [notesQuery.data]);
 
   const handleAdd = async () => {
     const content = newNote.trim();
     if (!content) return;
     setAdding(true);
     try {
-      await api.post('/insights', { title: content.slice(0, 50), content });
+      await createNote.mutateAsync({ title: content.slice(0, 50), content });
       setNewNote('');
-      await loadNotes();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     } finally {
       setAdding(false);
     }
   };
 
-  if (loading) {
+  if (notesQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <LoadingSpinner />

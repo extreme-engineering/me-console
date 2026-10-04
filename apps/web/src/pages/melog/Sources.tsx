@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Trash2, TerminalSquare, X, KeyRound } from 'lucide-react';
-import api from '../../lib/api';
+import type { MeLogSource } from '@meos/shared';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
 import {
@@ -11,18 +11,7 @@ import {
   formatTime,
   type MeLogCategory,
 } from './meta';
-
-interface MeLogSource {
-  id: string;
-  name: string;
-  category: string;
-  adapter: string;
-  endpoint?: string;
-  status: string;
-  lastSyncAt?: string;
-  entryCount: number;
-  isActive: boolean;
-}
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 
 interface TokenRow {
   id: string;
@@ -34,8 +23,6 @@ interface TokenRow {
 }
 
 export default function Sources() {
-  const [sources, setSources] = useState<MeLogSource[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState<{ name: string; category: MeLogCategory; adapter: string; endpoint: string }>({
@@ -45,21 +32,19 @@ export default function Sources() {
     endpoint: '',
   });
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api.get('/melog/sources');
-      setSources(res.data.sources || []);
-    } catch {
-      setSources([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const sourcesQuery = useApiQuery<{ sources: MeLogSource[] }>(['melog/sources'], '/melog/sources');
+  const sources = sourcesQuery.data?.sources ?? [];
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const createSource = useApiMutation(
+    (data: { name: string; category: MeLogCategory; adapter: string; endpoint?: string }) =>
+      apiRequest('post', '/melog/sources', data),
+    [['melog/sources']]
+  );
+
+  const deleteSource = useApiMutation(
+    (id: string) => apiRequest('delete', `/melog/sources/${id}`),
+    [['melog/sources']]
+  );
 
   const handleAdapterChange = (adapter: string) => {
     const preset = ADAPTER_PRESETS.find((p) => p.adapter === adapter);
@@ -75,7 +60,7 @@ export default function Sources() {
     e.preventDefault();
     setError('');
     try {
-      await api.post('/melog/sources', {
+      await createSource.mutateAsync({
         name: form.name.trim(),
         category: form.category,
         adapter: form.adapter,
@@ -83,7 +68,6 @@ export default function Sources() {
       });
       setForm({ name: '', category: 'im', adapter: 'chatlog', endpoint: '' });
       setShowForm(false);
-      loadData();
     } catch (err) {
       const message =
         err instanceof Error && 'response' in err
@@ -96,8 +80,7 @@ export default function Sources() {
   const handleDelete = async (id: string) => {
     if (!confirm('删除数据源会同时删除其全部条目，确定继续吗？')) return;
     try {
-      await api.delete(`/melog/sources/${id}`);
-      loadData();
+      await deleteSource.mutateAsync(id);
     } catch {}
   };
 
@@ -221,7 +204,7 @@ export default function Sources() {
         </form>
       )}
 
-      {loading ? (
+      {sourcesQuery.isLoading ? (
         <LoadingSpinner />
       ) : sources.length === 0 ? (
         <EmptyState
@@ -315,45 +298,43 @@ export default function Sources() {
 }
 
 function TokenManager({ sources }: { sources: MeLogSource[] }) {
-  const [tokens, setTokens] = useState<TokenRow[]>([]);
   const [name, setName] = useState('');
   const [sourceId, setSourceId] = useState('');
   const [freshSecret, setFreshSecret] = useState('');
   const [show, setShow] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await api.get('/melog/tokens');
-      setTokens(res.data.tokens || []);
-    } catch {
-      setTokens([]);
-    }
-  }, []);
+  const tokensQuery = useApiQuery<{ tokens: TokenRow[] }>(['melog/tokens'], '/melog/tokens');
+  const tokens = tokensQuery.data?.tokens ?? [];
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const createToken = useApiMutation(
+    (data: { name: string; sourceId?: string }) =>
+      apiRequest<{ secret: string }>('post', '/melog/tokens', data),
+    [['melog/tokens']]
+  );
+
+  const revokeToken = useApiMutation(
+    (id: string) => apiRequest('delete', `/melog/tokens/${id}`),
+    [['melog/tokens']]
+  );
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
     try {
-      const res = await api.post('/melog/tokens', {
+      const res = await createToken.mutateAsync({
         name: name.trim(),
         ...(sourceId ? { sourceId } : {}),
       });
-      setFreshSecret(res.data.secret);
+      setFreshSecret(res.secret);
       setName('');
       setSourceId('');
-      load();
     } catch {}
   };
 
   const revoke = async (id: string) => {
     if (!confirm('吊销后使用该令牌的脚本将立即失效，确定？')) return;
     try {
-      await api.delete(`/melog/tokens/${id}`);
-      load();
+      await revokeToken.mutateAsync(id);
     } catch {}
   };
 

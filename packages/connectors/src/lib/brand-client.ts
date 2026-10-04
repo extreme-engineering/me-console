@@ -1,8 +1,8 @@
 /**
  * 品牌 API 客户端：连接器向品牌板块写入渠道快照的统一出口。
  *
- * 零运行时依赖（Node 18+ 全局 fetch）。开发模式下 MeOS 免鉴权
- * （MEOS_DEV_AUTH=true 或 NODE_ENV=development），无需传 token。
+ * 零运行时依赖（Node 18+ 全局 fetch）。当 MeOS 后端开启开发旁路
+ * （MEOS_DEV_AUTH=true）时无需传 token；否则请设置 MEOS_TOKEN 环境变量。
  */
 
 export interface PlatformChannelSummary {

@@ -42,7 +42,7 @@ function toDateString(date: Date): string {
 export const habitRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-  }, async (request, reply) => {
+  }, async (request, _reply) => {
     try {
       const userId = request.user.userId;
       const today = toDateString(new Date());

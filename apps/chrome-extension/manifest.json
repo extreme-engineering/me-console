@@ -8,17 +8,19 @@
     "activeTab"
   ],
   "host_permissions": [
-    "http://localhost:3000/*",
     "http://localhost:3001/*",
+    "http://localhost:3015/*",
+    "http://localhost:3000/*",
     "http://localhost:5173/*",
-    "https://meos.app/*"
+    "https://i76snwerw0t7.meoo.fun/*"
   ],
   "content_scripts": [
     {
       "matches": [
+        "http://localhost:3015/*",
         "http://localhost:3000/*",
         "http://localhost:5173/*",
-        "https://meos.app/*",
+        "https://i76snwerw0t7.meoo.fun/*",
         "https://mp.weixin.qq.com/*",
         "https://channels.weixin.qq.com/*",
         "https://creator.xiaohongshu.com/*"

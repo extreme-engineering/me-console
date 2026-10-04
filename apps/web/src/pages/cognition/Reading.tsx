@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
-import api from '../../lib/api';
+import { useEffect, useMemo, useState } from 'react';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import { Plus, BookOpen, ExternalLink, Star, Trash2 } from 'lucide-react';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EmptyState from '../../components/EmptyState';
@@ -31,6 +31,10 @@ interface Topic {
   id: string;
   name: string;
 }
+
+// /reading 与 /topics 在本地/远端模式下可能返回数组或 { items|topics: [...] } 信封，与原页面的回退链保持一致
+type ReadingPayload = { items?: ReadingItem[]; data?: ReadingItem[] } | ReadingItem[];
+type TopicsPayload = { topics?: Topic[]; data?: Topic[] } | Topic[];
 
 const TYPE_LABELS: Record<ReadingType, string> = {
   book: '书籍',
@@ -203,9 +207,9 @@ function ReadingModal({
 }
 
 export default function Reading() {
-  const [items, setItems] = useState<ReadingItem[]>([]);
-  const [topics, setTopics] = useState<Topic[]>([]);
-  const [loading, setLoading] = useState(true);
+  const readingQuery = useApiQuery<ReadingPayload>(['reading'], '/reading');
+  const topicsQuery = useApiQuery<TopicsPayload>(['topics'], '/topics');
+
   const [activeStatus, setActiveStatus] = useState<ReadingStatus | 'all'>('all');
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<ReadingItem | null>(null);
@@ -213,27 +217,29 @@ export default function Reading() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const loadData = useCallback(async () => {
-    try {
-      const [itemsRes, topicsRes] = await Promise.all([
-        api.get('/reading'),
-        api.get('/topics'),
-      ]);
-      setItems(itemsRes.data.items || itemsRes.data?.data || itemsRes.data || []);
-      setTopics(topicsRes.data.topics || topicsRes.data?.data || topicsRes.data || []);
-    } catch (err) {
-      console.error(err);
-      setItems([]);
-    }
+  const items = useMemo(() => {
+    const data = readingQuery.data;
+    return Array.isArray(data) ? data : data?.items || data?.data || [];
+  }, [readingQuery.data]);
 
-    finally {
-      setLoading(false);
-    }
-  }, []);
+  const topics = useMemo(() => {
+    const data = topicsQuery.data;
+    return Array.isArray(data) ? data : data?.topics || data?.data || [];
+  }, [topicsQuery.data]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const createReading = useApiMutation(
+    (data: Record<string, unknown>) => apiRequest('post', '/reading', data),
+    [['reading']]
+  );
+  const updateReading = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) =>
+      apiRequest('patch', `/reading/${id}`, data),
+    [['reading']]
+  );
+  const deleteReading = useApiMutation(
+    (id: string) => apiRequest('delete', `/reading/${id}`),
+    [['reading']]
+  );
 
   const handleSave = async (data: {
     title: string;
@@ -245,20 +251,18 @@ export default function Reading() {
   }) => {
     try {
       if (editingItem) {
-        await api.patch(`/reading/${editingItem.id}`, data);
+        await updateReading.mutateAsync({ id: editingItem.id, data });
       } else {
-        await api.post('/reading', { ...data, status: 'want' });
+        await createReading.mutateAsync({ ...data, status: 'want' });
       }
       setShowModal(false);
       setEditingItem(null);
-      loadData();
     } catch {}
   };
 
   const handleStatusChange = async (item: ReadingItem, newStatus: ReadingStatus) => {
     try {
-      await api.patch(`/reading/${item.id}`, { status: newStatus });
-      loadData();
+      await updateReading.mutateAsync({ id: item.id, data: { status: newStatus } });
     } catch {}
   };
 
@@ -270,17 +274,15 @@ export default function Reading() {
     if (!confirmDelete) return;
     setDeleting(true);
     try {
-      await api.delete(`/reading/${confirmDelete}`);
+      await deleteReading.mutateAsync(confirmDelete);
       setConfirmDelete(null);
       setExpandedId(null);
-      loadData();
     } catch {} finally { setDeleting(false); }
   };
 
   const handleRating = async (item: ReadingItem, rating: number) => {
     try {
-      await api.patch(`/reading/${item.id}`, { rating });
-      loadData();
+      await updateReading.mutateAsync({ id: item.id, data: { rating } });
     } catch {}
   };
 
@@ -296,7 +298,7 @@ export default function Reading() {
     abandoned: items.filter((i) => i.status === 'abandoned').length,
   };
 
-  if (loading) {
+  if (readingQuery.isLoading || topicsQuery.isLoading) {
     return (
       <div className="max-w-5xl mx-auto py-12 flex justify-center">
         <LoadingSpinner />
@@ -365,8 +367,7 @@ export default function Reading() {
                   {isMockItem(item) && (
                     <MockBadge
                       onClick={async () => {
-                        await api.patch(`/reading/${item.id}`, { mock: false });
-                        loadData();
+                        await updateReading.mutateAsync({ id: item.id, data: { mock: false } });
                       }}
                     />
                   )}

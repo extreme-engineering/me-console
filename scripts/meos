@@ -116,7 +116,7 @@ launch_one() {
   # 关键：set -m 让下面的子 shell 独占进程组，$! == 组长 PID == PGID
   set -m
   case "$name" in
-    api) ( cd "$dir" && PORT="$port" pnpm dev ) >> "$(logfile_of api)" 2>&1 & ;;
+    api) ( cd "$dir" && set -a && . ./.env 2>/dev/null; set +a; PORT="$port" pnpm dev ) >> "$(logfile_of api)" 2>&1 & ;;
     web) ( cd "$dir" && pnpm dev --port "$port" --strictPort ) >> "$(logfile_of web)" 2>&1 & ;;
   esac
   pgid=$!
@@ -220,6 +220,7 @@ run_bootstrap() {
 PORT=$API_PORT
 NODE_ENV=development
 JWT_SECRET=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
+MEOS_DEV_AUTH=true
 EOF
     info "已生成 ${DIM}$API_DIR/.env${NC}（含随机 JWT_SECRET）"
   else

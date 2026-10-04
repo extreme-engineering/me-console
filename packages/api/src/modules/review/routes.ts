@@ -48,7 +48,7 @@ export const reviewRoutes: FastifyPluginAsync = async (fastify) => {
   // 获取复盘列表
   fastify.get('/', {
     onRequest: [fastify.authenticate],
-    handler: async (request, reply) => {
+    handler: async (request, _reply) => {
       try {
         const userId = request.user.userId;
         const { period, page = 1, limit = 20 } = request.query as { period?: string; page?: number; limit?: number };

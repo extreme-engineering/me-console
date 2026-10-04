@@ -263,3 +263,132 @@ body {
   letter-spacing: 0.06em;
   color: var(--color-ink-3);
 }
+
+/* Markdown documents (MarkdownDoc) */
+.md-doc {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.md-doc h1,
+.md-doc h2,
+.md-doc h3,
+.md-doc h4 {
+  font-family: var(--font-display);
+  color: var(--color-text-primary);
+  font-weight: 600;
+  margin: 1.1em 0 0.4em;
+  line-height: 1.35;
+}
+
+.md-doc > h1:first-child {
+  margin-top: 0;
+}
+
+.md-doc h1 {
+  font-size: 17px;
+}
+
+.md-doc h2 {
+  font-size: 15px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.md-doc h3 {
+  font-size: 14px;
+}
+
+.md-doc h4 {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.md-doc p {
+  margin: 0.5em 0;
+}
+
+.md-doc blockquote {
+  margin: 0.6em 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-tertiary);
+}
+
+.md-doc blockquote p {
+  margin: 0.2em 0;
+}
+
+.md-doc ul,
+.md-doc ol {
+  margin: 0.4em 0;
+  padding-left: 1.3em;
+}
+
+.md-doc ul {
+  list-style: disc;
+}
+
+.md-doc ol {
+  list-style: decimal;
+}
+
+.md-doc li {
+  margin: 0.25em 0;
+}
+
+.md-doc li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -1.1em;
+}
+
+.md-doc input[type='checkbox'] {
+  margin-right: 6px;
+  vertical-align: -2px;
+  accent-color: var(--color-primary, #4f6ef7);
+}
+
+.md-doc table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  font-size: 12.5px;
+}
+
+.md-doc th,
+.md-doc td {
+  border: 1px solid var(--color-border-light);
+  padding: 6px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-doc th {
+  background: var(--color-surface);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.md-doc code {
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+}
+
+.md-doc hr {
+  border: none;
+  border-top: 1px solid var(--color-border-light);
+  margin: 1em 0;
+}
+
+.md-doc a {
+  color: var(--color-primary, #4f6ef7);
+  text-decoration: none;
+}
+
+.md-doc a:hover {
+  text-decoration: underline;
+}

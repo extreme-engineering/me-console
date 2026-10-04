@@ -1,66 +1,38 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import { Trash2, Clock, History } from 'lucide-react';
-import api from '../lib/api';
+import type { BalanceWheelScore, Domain } from '@meos/shared';
 import LoadingSpinner from './LoadingSpinner';
 import { DomainIconMini } from './DomainIcon';
 import RadarChart from './charts/RadarChart';
-
-interface ScoreRecord {
-  id: string;
-  domainId: string;
-  score: number;
-  note?: string;
-  createdAt: string;
-  domain?: { id: string; name: string; icon: string };
-}
+import { apiRequest, useApiMutation, useApiQuery } from '../lib/api-queries';
+import { toast } from '../stores/toastStore';
 
 export default function BalanceWheelView() {
-  const [domains, setDomains] = useState<{ id: string; name: string; icon: string }[]>([]);
   const [scores, setScores] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [history, setHistory] = useState<ScoreRecord[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const loadDomains = useCallback(async () => {
-    try {
-      const response = await api.get('/domains');
-      setDomains(response.data.domains);
-      const initialScores: Record<string, number> = {};
-      response.data.domains.forEach((d: { id: string }) => {
-        initialScores[d.id] = 5;
-      });
-      setScores(initialScores);
-    } catch (err) {
-      console.error(err);
-      setDomains([]);
-    }
+  const domainsQuery = useApiQuery<{ domains: Domain[] }>(['domains'], '/domains');
+  const historyQuery = useApiQuery<{ scores: BalanceWheelScore[] }>(
+    ['balance-wheel/history'],
+    '/balance-wheel/history?limit=20',
+    { enabled: showHistory }
+  );
 
-    finally {
-      setLoading(false);
-    }
-  }, []);
+  const domains = domainsQuery.data?.domains ?? [];
+  const history = historyQuery.data?.scores ?? [];
 
-  const loadHistory = useCallback(async () => {
-    try {
-      const res = await api.get('/balance-wheel/history?limit=20');
-      setHistory(res.data.scores || []);
-    } catch (err) {
-      console.error(err);
-      setHistory([]);
-    }
-  }, []);
+  const saveScores = useApiMutation(
+    (scores: { domainId: string; score: number }[]) =>
+      apiRequest('post', '/balance-wheel/scores', { scores }),
+    [['balance-wheel/history']]
+  );
 
-  useEffect(() => {
-    loadDomains();
-  }, [loadDomains]);
-
-  useEffect(() => {
-    if (showHistory) {
-      loadHistory();
-    }
-  }, [showHistory, loadHistory]);
+  const deleteScore = useApiMutation(
+    (id: string) => apiRequest('delete', `/balance-wheel/scores/${id}`),
+    [['balance-wheel/history']]
+  );
 
   const handleSubmit = async () => {
     setSubmitting(true);
@@ -69,12 +41,10 @@ export default function BalanceWheelView() {
         domainId,
         score,
       }));
-      await api.post('/balance-wheel/scores', { scores: scoreData });
-    } catch (err) {
-      console.error(err);
-    }
-
-    finally {
+      await saveScores.mutateAsync(scoreData);
+    } catch {
+      toast.error('操作失败，请重试');
+    } finally {
       setSubmitting(false);
     }
   };
@@ -83,8 +53,7 @@ export default function BalanceWheelView() {
     if (!window.confirm('确定删除这条评分记录？')) return;
     setDeleting(id);
     try {
-      await api.delete(`/balance-wheel/scores/${id}`);
-      await loadHistory();
+      await deleteScore.mutateAsync(id);
     } finally {
       setDeleting(null);
     }
@@ -92,7 +61,7 @@ export default function BalanceWheelView() {
 
   const chartData = domains.map((domain) => ({
     domain: domain.name,
-    score: scores[domain.id] || 0,
+    score: scores[domain.id] || 5,
   }));
 
   const formatDate = (dateStr: string) => {
@@ -104,7 +73,7 @@ export default function BalanceWheelView() {
     });
   };
 
-  if (loading) {
+  if (domainsQuery.isLoading) {
     return (
       <div className="max-w-5xl mx-auto flex items-center justify-center py-32">
         <LoadingSpinner />
@@ -194,7 +163,7 @@ export default function BalanceWheelView() {
               {domains.map((domain) => (
                 <div key={domain.id} className="flex items-center gap-4">
                   <div className="flex items-center gap-2.5 w-32">
-                    <DomainIconMini icon={domain.icon} domainName={domain.name} size={28} />
+                    <DomainIconMini icon={domain.icon || ''} domainName={domain.name} size={28} />
                     <span className="text-sm font-medium truncate" style={{ color: 'var(--color-text-secondary)' }}>{domain.name}</span>
                   </div>
                   <div className="flex items-center gap-3 flex-1">

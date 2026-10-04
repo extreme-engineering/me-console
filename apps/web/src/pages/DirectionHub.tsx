@@ -1,18 +1,21 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Target, Compass, Flag, GitBranch } from 'lucide-react';
+import { Target, Compass, Flag, FileText, GitBranch } from 'lucide-react';
 import MethodologyCard from '../components/MethodologyCard';
+import HubTabs from '../components/HubTabs';
 import Vision from './direction/Vision';
 import Domains from './direction/Domains';
 import Goals from './direction/Goals';
+import OkrDoc from './direction/OkrDoc';
 import Workflow from './direction/Workflow';
 
-type TabKey = 'vision' | 'domains' | 'goals' | 'workflow';
+type TabKey = 'vision' | 'domains' | 'goals' | 'okrdoc' | 'workflow';
 
-const TABS: { key: TabKey; label: string; icon: typeof Target }[] = [
+const TABS = [
   { key: 'vision', label: '愿景与价值观', icon: Target },
   { key: 'domains', label: '领域与平衡', icon: Compass },
   { key: 'goals', label: '目标与项目', icon: Flag },
+  { key: 'okrdoc', label: 'OKR 文档', icon: FileText },
   { key: 'workflow', label: '工作流', icon: GitBranch },
 ];
 
@@ -21,8 +24,8 @@ export default function DirectionHub() {
   const initialTab = (searchParams.get('tab') as TabKey) || 'vision';
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
 
-  const handleTabChange = (tab: TabKey) => {
-    setActiveTab(tab);
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab as TabKey);
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.set('tab', tab);
@@ -39,44 +42,24 @@ export default function DirectionHub() {
             fontFamily: 'var(--font-display)',
             fontWeight: 500,
             letterSpacing: '-0.02em',
-            color: 'var(--color-text-primary)',
+            color: 'var(--color-ink)',
           }}
         >
           方向
         </h1>
-        <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+        <p className="text-sm" style={{ color: 'var(--color-ink-3)' }}>
           愿景、领域与目标，定义你要去哪里
         </p>
       </div>
 
-      <div className="flex gap-1 mb-6 p-1 rounded-xl w-fit" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>
-        {TABS.map((tab) => {
-          const Icon = tab.icon;
-          return (
-            <button
-              key={tab.key}
-              onClick={() => handleTabChange(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-all ${
-                activeTab === tab.key ? 'font-medium' : ''
-              }`}
-              style={{
-                backgroundColor: activeTab === tab.key ? 'var(--color-surface)' : 'transparent',
-                color: activeTab === tab.key ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-                boxShadow: activeTab === tab.key ? 'var(--shadow-sm)' : 'none',
-              }}
-            >
-              <Icon size={15} />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <HubTabs tabs={TABS} activeTab={activeTab} onTabChange={handleTabChange} />
 
       <MethodologyCard page={`direction:${activeTab}`} />
 
       {activeTab === 'vision' && <Vision />}
       {activeTab === 'domains' && <Domains />}
       {activeTab === 'goals' && <Goals />}
+      {activeTab === 'okrdoc' && <OkrDoc />}
       {activeTab === 'workflow' && <Workflow />}
     </div>
   );

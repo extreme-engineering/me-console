@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, X, ExternalLink } from 'lucide-react';
-import api from '../../lib/api';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import Modal from '../../components/Modal';
 import FormField from '../../components/FormField';
 import EmptyState from '../../components/EmptyState';
 import MockBadge, { MockClaimField } from '../../components/MockBadge';
 import { CONTENT_STATUS_LABELS, CONTENT_TYPE_LABELS, CONTENT_TYPE_ICONS, PRIORITY_LABELS } from './constants';
 import type { BrandPillar, ContentDistribution, ContentItem, ContentStatus, PlatformChannel } from '@meos/shared';
+import { toast } from '../../stores/toastStore';
 
 const COLUMNS = ['idea', 'drafting', 'ready', 'published'] as const;
 
@@ -16,6 +17,22 @@ type ContentListItem = ContentItem & { _count?: { distributions: number } };
 interface TopicOption {
   id: string;
   title: string;
+}
+
+interface ContentsResponse {
+  contents: ContentListItem[];
+}
+
+interface ChannelsResponse {
+  channels: PlatformChannel[];
+}
+
+interface PillarsResponse {
+  pillars: BrandPillar[];
+}
+
+interface TopicsResponse {
+  topics: TopicOption[];
 }
 
 const emptyForm = {
@@ -32,42 +49,52 @@ const emptyForm = {
 };
 
 export default function Pipeline() {
-  const [contents, setContents] = useState<ContentListItem[]>([]);
-  const [channels, setChannels] = useState<PlatformChannel[]>([]);
-  const [pillars, setPillars] = useState<BrandPillar[]>([]);
-  const [topics, setTopics] = useState<TopicOption[]>([]);
-  const [loading, setLoading] = useState(true);
+  const contentsQuery = useApiQuery<ContentsResponse>(['brand/contents'], '/brand/contents');
+  const channelsQuery = useApiQuery<ChannelsResponse>(['brand/channels'], '/brand/channels');
+  const pillarsQuery = useApiQuery<PillarsResponse>(['brand/pillars'], '/brand/pillars');
+  const topicsQuery = useApiQuery<TopicsResponse>(['topics'], '/topics');
+
+  const contents = contentsQuery.data?.contents ?? [];
+  const channels = channelsQuery.data?.channels ?? [];
+  const pillars = pillarsQuery.data?.pillars ?? [];
+  const topics = topicsQuery.data?.topics ?? [];
+
   const [quickTitle, setQuickTitle] = useState('');
   const [editing, setEditing] = useState<ContentItem | null>(null);
   const [form, setForm] = useState(emptyForm);
 
-  const load = useCallback(async () => {
-    try {
-      const [contentsRes, channelsRes, pillarsRes, topicsRes] = await Promise.all([
-        api.get('/brand/contents'),
-        api.get('/brand/channels'),
-        api.get('/brand/pillars'),
-        api.get('/topics'),
-      ]);
-      setContents(contentsRes.data.contents || []);
-      setChannels(channelsRes.data.channels || []);
-      setPillars(pillarsRes.data.pillars || []);
-      setTopics(topicsRes.data.topics || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const createContent = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/brand/contents', data), [
+    ['brand/contents'],
+    ['brand/overview'],
+  ]);
+  const updateContent = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/brand/contents/${id}`, data),
+    [['brand/contents'], ['brand/overview']]
+  );
+  const deleteContent = useApiMutation((id: string) => apiRequest('delete', `/brand/contents/${id}`), [
+    ['brand/contents'],
+    ['brand/overview'],
+  ]);
+  const addDistribution = useApiMutation(
+    ({ contentId, channelId }: { contentId: string; channelId: string }) =>
+      apiRequest('post', `/brand/contents/${contentId}/distributions`, { channelId }),
+    [['brand/contents'], ['brand/overview']]
+  );
+  const patchDistribution = useApiMutation(
+    ({ distId, data }: { distId: string; data: Record<string, unknown> }) =>
+      apiRequest('patch', `/brand/distributions/${distId}`, data),
+    [['brand/contents'], ['brand/overview']]
+  );
+  const deleteDistribution = useApiMutation((distId: string) => apiRequest('delete', `/brand/distributions/${distId}`), [
+    ['brand/contents'],
+    ['brand/overview'],
+  ]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
+  // 详情按需拉取，结果直接驱动弹窗表单（沿用命令式流程，避免查询副作用覆盖未保存的表单输入）
   const openDetail = async (content: ContentItem) => {
     try {
-      const res = await api.get(`/brand/contents/${content.id}`);
-      const full: ContentItem = res.data.content;
+      const res = await apiRequest<{ content: ContentItem }>('get', `/brand/contents/${content.id}`);
+      const full: ContentItem = res.content;
       setEditing(full);
       setForm({
         title: full.title,
@@ -81,8 +108,8 @@ export default function Pipeline() {
         reviewNote: full.reviewNote || '',
         isMock: !!full.isMock,
       });
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
@@ -90,88 +117,84 @@ export default function Pipeline() {
     const title = quickTitle.trim();
     if (!title) return;
     try {
-      await api.post('/brand/contents', { title });
+      await createContent.mutateAsync({ title });
       setQuickTitle('');
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const handleSave = async () => {
     if (!editing) return;
     try {
-      await api.patch(`/brand/contents/${editing.id}`, {
-        title: form.title,
-        type: form.type,
-        priority: form.priority,
-        pillarId: form.pillarId || null,
-        topicId: form.topicId || null,
-        publishDue: form.publishDue || null,
-        coreMessage: form.coreMessage || null,
-        outline: form.outline || null,
-        reviewNote: form.reviewNote || null,
-        isMock: form.isMock,
+      await updateContent.mutateAsync({
+        id: editing.id,
+        data: {
+          title: form.title,
+          type: form.type,
+          priority: form.priority,
+          pillarId: form.pillarId || null,
+          topicId: form.topicId || null,
+          publishDue: form.publishDue || null,
+          coreMessage: form.coreMessage || null,
+          outline: form.outline || null,
+          reviewNote: form.reviewNote || null,
+          isMock: form.isMock,
+        },
       });
       setEditing(null);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const handleDelete = async () => {
     if (!editing) return;
     try {
-      await api.delete(`/brand/contents/${editing.id}`);
+      await deleteContent.mutateAsync(editing.id);
       setEditing(null);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const handleStatus = async (content: ContentItem, status: ContentStatus) => {
     try {
-      await api.patch(`/brand/contents/${content.id}`, { status });
+      await updateContent.mutateAsync({ id: content.id, data: { status } });
       setEditing((prev) => (prev ? { ...prev, status } : prev));
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const handleAddDistribution = async (contentId: string, channelId: string) => {
     try {
-      await api.post(`/brand/contents/${contentId}/distributions`, { channelId });
+      await addDistribution.mutateAsync({ contentId, channelId });
       await openDetail({ ...editing!, id: contentId } as ContentItem);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const handlePatchDistribution = async (dist: ContentDistribution, payload: Record<string, unknown>) => {
     try {
-      await api.patch(`/brand/distributions/${dist.id}`, payload);
+      await patchDistribution.mutateAsync({ distId: dist.id, data: payload });
       if (editing) await openDetail(editing);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const handleDeleteDistribution = async (distId: string) => {
     try {
-      await api.delete(`/brand/distributions/${distId}`);
+      await deleteDistribution.mutateAsync(distId);
       if (editing) await openDetail(editing);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
-  if (loading) {
+  if (contentsQuery.isLoading || channelsQuery.isLoading || pillarsQuery.isLoading || topicsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-400" />

@@ -1,46 +1,65 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Trash2, LineChart as LineChartIcon } from 'lucide-react';
 import LineChart from '../../components/charts/LineChart';
-import api from '../../lib/api';
+import { apiRequest, useApiMutation, useApiQuery } from '../../lib/api-queries';
 import Modal from '../../components/Modal';
 import FormField from '../../components/FormField';
 import EmptyState from '../../components/EmptyState';
 import MockBadge from '../../components/MockBadge';
 import { CHANNEL_STATUS_LABELS, PLATFORM_PRESETS } from './constants';
 import type { MetricSnapshot, PlatformChannel } from '@meos/shared';
+import { toast } from '../../stores/toastStore';
 
 const emptyChannelForm = { platform: 'custom', name: '', handle: '', cadence: '', positioning: '' };
 const emptySnapshotForm = { followers: '', views: '', likes: '', comments: '', shares: '', revenue: '', note: '' };
 
+interface ChannelsResponse {
+  channels: PlatformChannel[];
+}
+
+interface SnapshotsResponse {
+  snapshots: MetricSnapshot[];
+}
+
 export default function Channels() {
-  const [channels, setChannels] = useState<PlatformChannel[]>([]);
-  const [loading, setLoading] = useState(true);
+  const channelsQuery = useApiQuery<ChannelsResponse>(['brand/channels'], '/brand/channels');
+  const channels = channelsQuery.data?.channels ?? [];
   const [adding, setAdding] = useState(false);
   const [channelForm, setChannelForm] = useState(emptyChannelForm);
   const [snapshotFor, setSnapshotFor] = useState<PlatformChannel | null>(null);
   const [snapshotForm, setSnapshotForm] = useState(emptySnapshotForm);
   const [trendFor, setTrendFor] = useState<PlatformChannel | null>(null);
-  const [trendSnapshots, setTrendSnapshots] = useState<MetricSnapshot[]>([]);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await api.get('/brand/channels');
-      setChannels(res.data.channels || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // 趋势为条件查询：打开弹窗才拉取（staleTime 0 保持每次打开都重新请求，与原点击即请求一致）
+  const trendQuery = useApiQuery<SnapshotsResponse>(
+    ['brand/snapshots', trendFor?.id ?? ''],
+    `/brand/snapshots?channelId=${trendFor?.id ?? ''}&limit=30`,
+    { enabled: !!trendFor, staleTime: 0 }
+  );
+  const trendSnapshots = trendQuery.data?.snapshots ?? [];
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const addChannel = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/brand/channels', data), [
+    ['brand/channels'],
+    ['brand/overview'],
+  ]);
+  const saveSnapshot = useApiMutation((data: Record<string, unknown>) => apiRequest('post', '/brand/snapshots', data), [
+    ['brand/snapshots'],
+    ['brand/channels'],
+    ['brand/overview'],
+  ]);
+  const deleteChannel = useApiMutation((id: string) => apiRequest('delete', `/brand/channels/${id}`), [
+    ['brand/channels'],
+    ['brand/overview'],
+  ]);
+  const updateChannel = useApiMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) => apiRequest('patch', `/brand/channels/${id}`, data),
+    [['brand/channels'], ['brand/overview']]
+  );
 
   const handleAddChannel = async () => {
     if (!channelForm.name.trim()) return;
     try {
-      await api.post('/brand/channels', {
+      await addChannel.mutateAsync({
         platform: channelForm.platform,
         name: channelForm.name.trim(),
         handle: channelForm.handle || null,
@@ -49,9 +68,8 @@ export default function Channels() {
       });
       setAdding(false);
       setChannelForm(emptyChannelForm);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
@@ -63,7 +81,7 @@ export default function Channels() {
   const handleSaveSnapshot = async () => {
     if (!snapshotFor || snapshotForm.followers === '') return;
     try {
-      await api.post('/brand/snapshots', {
+      await saveSnapshot.mutateAsync({
         channelId: snapshotFor.id,
         followers: parseInt(snapshotForm.followers, 10),
         views: snapshotForm.views === '' ? null : parseInt(snapshotForm.views, 10),
@@ -74,51 +92,41 @@ export default function Channels() {
         note: snapshotForm.note || null,
       });
       setSnapshotFor(null);
-      await load();
-    } catch (err) {
-      console.error(err);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
-  const openTrend = async (channel: PlatformChannel) => {
-    try {
-      const res = await api.get(`/brand/snapshots?channelId=${channel.id}&limit=30`);
-      setTrendSnapshots(res.data.snapshots || []);
-      setTrendFor(channel);
-    } catch (err) {
-      console.error(err);
-    }
+  const openTrend = (channel: PlatformChannel) => {
+    setTrendFor(channel);
   };
 
   const handleDeleteChannel = async (id: string) => {
     try {
-      await api.delete(`/brand/channels/${id}`);
-      await load();
-    } catch (err) {
-      console.error(err);
+      await deleteChannel.mutateAsync(id);
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const toggleStatus = async (channel: PlatformChannel) => {
     try {
       const next = channel.status === 'active' ? 'paused' : 'active';
-      await api.patch(`/brand/channels/${channel.id}`, { status: next });
-      await load();
-    } catch (err) {
-      console.error(err);
+      await updateChannel.mutateAsync({ id: channel.id, data: { status: next } });
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
   const claimChannel = async (channel: PlatformChannel) => {
     try {
-      await api.patch(`/brand/channels/${channel.id}`, { isMock: false });
-      await load();
-    } catch (err) {
-      console.error(err);
+      await updateChannel.mutateAsync({ id: channel.id, data: { isMock: false } });
+    } catch {
+      toast.error('操作失败，请重试');
     }
   };
 
-  if (loading) {
+  if (channelsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-slate-400" />
